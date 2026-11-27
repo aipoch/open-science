@@ -3256,6 +3256,35 @@ const pythonLibraryMethodEffect = (
   )
 }
 
+// A binding can escape into later Cells. Include every possible result, iteration
+// element and receiver transition, preserving registry order for member lookups.
+export const reachablePythonLibrarySummaries = (
+  roots: readonly string[]
+): Array<[string, PythonLibraryObjectSummary]> => {
+  const reachable = new Set(roots)
+  for (const name of reachable) {
+    const summary = Object.hasOwn(PYTHON_LIBRARY_EFFECTS, name)
+      ? PYTHON_LIBRARY_EFFECTS[name]
+      : undefined
+    if (!summary) continue
+    for (const type of summary.iterationTypes ?? []) reachable.add(type)
+    for (const type of Object.values(summary.typeWhenMembersWritten ?? {})) reachable.add(type)
+    for (const effect of Object.values(summary.methods)) {
+      for (const type of [
+        effect.returnType,
+        effect.scalarInputReturnType,
+        effect.returnTypeWhenKeywordNotTrue?.returnType,
+        effect.receiverTypeWhenKeywordNotTrue?.typeName,
+        ...(effect.destructuredReturnTypes ?? []),
+        ...Object.values(effect.returnTypeByArgumentShape?.types ?? {})
+      ]) {
+        if (type) reachable.add(type)
+      }
+    }
+  }
+  return Object.entries(PYTHON_LIBRARY_EFFECTS).filter(([name]) => reachable.has(name))
+}
+
 // Follow tuple positions, then the library's known iterable element types.
 // An unmodeled element stays unknown; never flatten nested targets into return slots.
 const pythonUnpackedReturnType = (

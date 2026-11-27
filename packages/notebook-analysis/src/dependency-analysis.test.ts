@@ -16,6 +16,7 @@ import { NotebookDependencyProjector } from './dependency-projection'
 import { analyzePythonSources } from './dependency-analysis-python'
 import type {
   NotebookDependencyAnalysisSidecar,
+  NotebookDependencyProjection,
   NotebookDependencyTypeSummary
 } from './dependency-analysis-types'
 
@@ -56,6 +57,92 @@ const run = (
   artifacts: [],
   workingFiles: [],
   inputFiles: []
+})
+
+it('keeps scalar cells small while resolving chained methods and later scientific imports', async () => {
+  const scripts = [
+    'n = 1',
+    'label = " sample "',
+    'parts = label.strip().split()',
+    'import numpy as np',
+    'a = np.array([n])',
+    'n = 2'
+  ]
+  const facts = await analyzePythonSources(scripts)
+  const scalarTypes = facts[0]!.typeSummaries ?? []
+  expect(scalarTypes.map((type) => type.name)).toContain('python.scalar')
+  expect(scalarTypes.map((type) => type.name)).not.toContain('pandas.DataFrame')
+  const projection = projectNotebookDependencies(
+    facts.map((facts, index) => ({
+      run: run('run-' + index, 'cell-' + index, scripts[index]!, index + 1),
+      facts
+    }))
+  )
+  expect(projection.stalenessByRunId['run-2']).toEqual({ state: 'clear' })
+  expect(projection.stalenessByRunId['run-4']).toMatchObject({
+    state: 'stale',
+    causedByRunId: 'run-5'
+  })
+})
+
+it('reads earlier scripts a bounded number of times during a cold batch', async () => {
+  const storageRoot = await mkdtemp(join(tmpdir(), 'notebook-history-scan-'))
+  temporaryRoots.push(storageRoot)
+  const runs = Array.from({ length: 80 }, (_, index) =>
+    run('r' + index, 'c' + index, 'v = 1', index)
+  )
+  let firstScriptReads = 0
+  Object.defineProperty(runs[0], 'script', {
+    get() {
+      firstScriptReads++
+      return 'v = 1'
+    }
+  })
+  const analyzer = new NotebookDependencyAnalyzer({
+    storageRoot,
+    repository: { readSessionRuns: async () => runs }
+  })
+  await analyzer.project({ projectId: 'p', sessionId: 's' })
+  // Hashing and analyzing a run take a few reads. Replaying it for every later run takes 79 more.
+  expect(firstScriptReads).toBeLessThan(20)
+})
+
+it('keeps interleaved kernel contexts equivalent to analyzing one additional run at a time', async () => {
+  const storageRoot = await mkdtemp(join(tmpdir(), 'notebook-batch-context-'))
+  temporaryRoots.push(storageRoot)
+  const history = [
+    run('r0', 'c0', 'path = "a.csv"', 0),
+    { ...run('r1', 'c1', 'path = "b.csv"', 1), environment: 'other' },
+    run('r2', 'c2', 'result = open(path).read()', 2),
+    { ...run('r3', 'c3', 'result = open(path).read()', 3), environment: 'other' },
+    { ...run('r4', 'c4', 'path = unknown()', 4), status: 'failed' as const },
+    { ...run('r5', 'c5', 'path = "new.csv"', 5), kernelEpochId: 'epoch-2' },
+    run('r6', 'c6', 'result = open(path).read()', 6),
+    { ...run('r7', 'c7', 'result = open(path).read()', 7), kernelEpochId: 'epoch-2' }
+  ]
+  const project = async (
+    sessionId: string,
+    incremental: boolean
+  ): Promise<{
+    runs: NotebookDependencyAnalysisSidecar['runs']
+    projection: NotebookDependencyProjection
+  }> => {
+    let length = incremental ? 1 : history.length
+    const analyzer = new NotebookDependencyAnalyzer({
+      storageRoot,
+      repository: { readSessionRuns: async () => history.slice(0, length) }
+    })
+    for (; length < history.length; length++) await analyzer.project({ projectId: 'p', sessionId })
+    const projection = await analyzer.project({ projectId: 'p', sessionId })
+    const cache = JSON.parse(
+      await readFile(
+        join(storageRoot, 'notebooks', 'p', sessionId, 'cache', 'dependency-analysis.json'),
+        'utf8'
+      )
+    )
+    return { runs: cache.runs, projection }
+  }
+  expect(await project('batch', false)).toEqual(await project('one-at-a-time', true))
 })
 
 describe('Python lexical summary boundaries', () => {
@@ -1625,6 +1712,32 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
     } finally {
       append.mockRestore()
     }
+  })
+
+  it('rebuilds obsolete Run facts while retaining a finalized epoch on upgrade', async () => {
+    const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-analysis-upgrade-'))
+    temporaryRoots.push(storageRoot)
+    const runs = [run('r1', 'c1', 'x = 1', 1)]
+    const options = { storageRoot, repository: { readSessionRuns: async () => runs } }
+    const request = { projectId: 'project', sessionId: 'session' }
+    const old = new NotebookDependencyAnalyzer(options)
+    const expected = await old.project(request)
+    await old.finalizeEpochs({ ...request, kernelEpochIds: ['epoch-1'] })
+    const path = join(storageRoot, 'notebooks/project/session/cache/dependency-analysis.json')
+    const cache = JSON.parse(await readFile(path, 'utf8'))
+    const groups = Object.keys(cache.projectionSnapshots)
+    expect(groups).toHaveLength(1)
+    cache.analyzerRevision = 'previous-revision'
+    cache.runs.r1 = { checksum: 'obsolete', facts: { state: 'obsolete' } }
+    cache.projectionSnapshots[groups[0]!].checksum = 'obsolete'
+    await writeFile(path, JSON.stringify(cache))
+    await expect(new NotebookDependencyAnalyzer(options).project(request)).resolves.toEqual(
+      expected
+    )
+    const updated = JSON.parse(await readFile(path, 'utf8'))
+    expect(updated.analyzerRevision).not.toBe(cache.analyzerRevision)
+    expect(Object.keys(updated.projectionSnapshots)).toEqual(groups)
+    expect(updated.projectionSnapshots[groups[0]!].checksum).not.toBe('obsolete')
   })
 
   it('keeps a long epoch incremental and restores its finalized snapshot without replay', async () => {

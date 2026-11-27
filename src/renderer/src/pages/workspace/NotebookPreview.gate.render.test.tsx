@@ -1484,6 +1484,79 @@ describe('NotebookPreview per-kernel tabs', () => {
     expect(scrollIntoView).toHaveBeenCalledWith({ block: 'center' })
   })
 
+  it('mounts an offscreen Cell when Session activity requests its Run', async () => {
+    const height = vi.spyOn(Element.prototype, 'clientHeight', 'get').mockReturnValue(556)
+    const rowHeight = vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockReturnValue(220)
+    try {
+      await mountWithRuns(
+        Array.from({ length: 100 }, (_, i) => makeRun({ runId: `run-${i}`, startedAt: i + 1 }))
+      )
+      const viewport = container.querySelector<HTMLElement>('[data-notebook-viewport]')!
+      const target = '[data-run-id="run-50"]'
+      expect(viewport.querySelector(target)).toBeNull()
+      Object.defineProperty(viewport, 'scrollHeight', { value: 22_000 })
+      viewport.scrollTo = (options?: ScrollToOptions | number): void => {
+        if (typeof options !== 'object' || options.top === undefined) return
+        viewport.scrollTop = options.top
+        queueMicrotask(() => viewport.dispatchEvent(new Event('scroll')))
+      }
+      await act(async () =>
+        root.render(
+          <NotebookPreview
+            item={{ ...item, notebookRunId: 'run-50', notebookRunFocusRequest: 1 }}
+          />
+        )
+      )
+      expect(viewport.querySelector(target)).not.toBeNull()
+      expect(viewport.querySelectorAll('[data-run-id]').length).toBeLessThanOrEqual(32)
+    } finally {
+      rowHeight.mockRestore()
+      height.mockRestore()
+    }
+  })
+
+  it('bounds mounted historical Cells and restores the window when find closes on another tab', async () => {
+    const height = vi.spyOn(Element.prototype, 'clientHeight', 'get').mockReturnValue(556)
+    const rowHeight = vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockReturnValue(220)
+    try {
+      await mountWithRuns(
+        Array.from({ length: 100 }, (_, i) => makeRun({ runId: `run-${i}`, startedAt: i + 1 }))
+      )
+      const mounted = container.querySelectorAll('[data-run-id]').length
+      expect(mounted).toBeGreaterThan(0)
+      expect(mounted).toBeLessThanOrEqual(32)
+      const find = new EventTarget()
+      const subscribe = (event: string) => (listener: () => void) => {
+        find.addEventListener(event, listener)
+        return () => find.removeEventListener(event, listener)
+      }
+      Object.assign(window.api, {
+        window: { onShowWindowFind: subscribe('show'), onHideWindowFind: subscribe('hide') }
+      })
+      const renderActive = (active: boolean): Promise<void> =>
+        act(async () => root.render(<NotebookPreview item={item} isActive={active} />))
+      await renderActive(false)
+      await renderActive(true)
+      const list = container.querySelector('[data-run-id]')!.parentElement!
+      vi.spyOn(list, 'getClientRects').mockReturnValue([
+        new DOMRect(0, 0, 400, 556)
+      ] as unknown as DOMRectList)
+      await act(async () => {
+        find.dispatchEvent(new Event('show'))
+      })
+      expect(container.querySelectorAll('[data-run-id]')).toHaveLength(100)
+      await renderActive(false)
+      await act(async () => {
+        find.dispatchEvent(new Event('hide'))
+      })
+      await renderActive(true)
+      expect(container.querySelectorAll('[data-run-id]').length).toBeLessThanOrEqual(32)
+    } finally {
+      rowHeight.mockRestore()
+      height.mockRestore()
+    }
+  })
+
   it('opens a bounded live namespace snapshot and reloads when private names are shown', async () => {
     await mountWithRuns([makeRun({ runId: 'p1', kernelKind: 'python' })])
 
