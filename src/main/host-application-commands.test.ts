@@ -527,10 +527,11 @@ describe('Host application commands', () => {
       hostApplicationCommands.network.checkConnectivity,
       invocation([])
     )
+    const remote = createWebCallerContext('remote-browser', { location: 'remote' })
     for (const [name, command] of Object.entries(hostApplicationCommands.localModels)) {
       await router.dispatcher.invoke(
         command,
-        invocation(name === 'setOcrLanguages' ? [['eng']] : [])
+        invocation(name === 'setOcrLanguages' ? [['eng']] : [], remote)
       )
     }
     await router.dispatcher.invoke(
@@ -597,19 +598,22 @@ describe('Host application commands', () => {
     }
     await router.dispatcher.invoke(
       hostApplicationCommands.pdfStructure.readCached,
-      invocation([{ attachmentVersionId: 'version-1', page: 1 }])
+      invocation([{ attachmentVersionId: 'version-1', page: 1 }], remote)
     )
-    const parseInvocation = invocation([pdfRequest] as const)
+    const parseInvocation = invocation([pdfRequest] as const, remote)
     await router.dispatcher.invoke(hostApplicationCommands.pdfStructure.parse, parseInvocation)
     await router.dispatcher.invoke(
       hostApplicationCommands.pdfStructure.cancel,
-      invocation(['00000000-0000-4000-8000-000000000001'])
+      invocation(['00000000-0000-4000-8000-000000000001'], remote)
     )
     await router.dispatcher.invoke(
       hostApplicationCommands.pdfStructure.readThumbnail,
-      invocation([imageRequest])
+      invocation([imageRequest], remote)
     )
-    await router.dispatcher.invoke(hostApplicationCommands.pdfStructure.clearCache, invocation([]))
+    await router.dispatcher.invoke(
+      hostApplicationCommands.pdfStructure.clearCache,
+      invocation([], remote)
+    )
     expect(dependencies.pdfStructure.parse).toHaveBeenCalledWith(
       pdfRequest,
       parseInvocation.callerContext,
@@ -677,19 +681,6 @@ describe('Host application commands', () => {
     const previewRequest = { path: '/data/result.txt', encoding: 'utf8' as const }
     const parent = { parent: '/target' }
     const argsByChannel: Readonly<Record<string, readonly unknown[]>> = {
-      'pdf-structure:read-cached': [{ attachmentVersionId: 'v1', page: 1 }],
-      'pdf-structure:parse': [
-        { attachmentVersionId: 'v1', page: 1, requestId: '00000000-0000-4000-8000-000000000001' }
-      ],
-      'pdf-structure:cancel': ['00000000-0000-4000-8000-000000000001'],
-      'pdf-structure:read-thumbnail': [
-        {
-          attachmentVersionId: 'v1',
-          page: 1,
-          extractionId: '00000000-0000-4000-8000-000000000001',
-          thumbnailId: 'image-1'
-        }
-      ],
       'storage:accept-missing-data-root': [],
       'storage:ack-data-root-handoff-flush': [{ requestId: 'flush-1', status: 'completed' }],
       'local-fs:grant-root': [{ path: '/data', access: 'ro' }],
@@ -719,7 +710,7 @@ describe('Host application commands', () => {
         .filter((channel): channel is string => channel !== null)
     )
 
-    expect(localOnlyChannels).toHaveLength(45)
+    expect(localOnlyChannels).toHaveLength(35)
     for (const channel of localOnlyChannels) {
       await expect(
         router.dispatcher.invoke(

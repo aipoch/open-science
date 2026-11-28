@@ -36,7 +36,7 @@ describe('renderer contract catalog', () => {
       expect(contract.surfaceInstallation).toMatchObject({
         electron: 'preload',
         localWeb: 'web-rpc',
-        remoteWeb: 'rejecting-stub'
+        remoteWeb: 'web-rpc'
       })
     }
   })

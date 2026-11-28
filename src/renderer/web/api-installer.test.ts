@@ -178,31 +178,22 @@ describe('installWebRendererContracts', () => {
     expect(parseLiteratureDeletionError(result)).toEqual(diagnostic)
   })
 
-  it('returns a cache miss locally and installs a rejecting cache lookup remotely', async () => {
-    const channel = 'pdf-structure:read-cached'
+  it('forwards remote PDF cache lookups and preserves a cache miss', async () => {
     const request = { attachmentVersionId: 'version-1', page: 1 }
     const invoke = vi.fn().mockResolvedValue(undefined)
-    const local: Record<string, unknown> = {}
-    installWebRendererContracts(local, {
-      availableRpcChannels: new Set([channel]),
+    const remote: Record<string, unknown> = {}
+    const available = RENDERER_CONTRACT_CATALOG.flatMap(({ channel, surfaceInstallation }) =>
+      channel && surfaceInstallation.remoteWeb === 'web-rpc' ? [channel] : []
+    )
+    installWebRendererContracts(remote, {
+      availableRpcChannels: new Set(available),
       restrictedRpcChannels: new Set(),
       invoke,
       subscribe: vi.fn(),
       nativeAdapters: {}
     })
-    await expect(methodAt(local, 'pdfStructure.readCached')?.(request)).resolves.toBeUndefined()
-    expect(invoke).toHaveBeenCalledWith(channel, [request])
-    invoke.mockClear()
-    const remote: Record<string, unknown> = {}
-    installWebRendererContracts(remote, {
-      availableRpcChannels: new Set(),
-      restrictedRpcChannels: new Set([channel]),
-      invoke,
-      subscribe: vi.fn(),
-      nativeAdapters: {}
-    })
-    await expect(methodAt(remote, 'pdfStructure.readCached')?.(request)).rejects.toThrow()
-    expect(invoke).not.toHaveBeenCalled()
+    await expect(methodAt(remote, 'pdfStructure.readCached')?.(request)).resolves.toBeUndefined()
+    expect(invoke).toHaveBeenCalledWith('pdf-structure:read-cached', [request])
   })
 
   it('forwards the Session delegation mutation unchanged and returns the authoritative Session', async () => {

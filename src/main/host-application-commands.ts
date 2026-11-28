@@ -942,48 +942,24 @@ const registerHostApplicationCommands = (
         )
     })
     scope.registerGroup(hostApplicationCommandGroups[9], {
-      'local-models:get-snapshot': ({ callerContext, args }) =>
-        localCommand(callerContext, 'local-models:get-snapshot', () =>
-          dependencies.localModels.getSnapshot(args[0])
-        ),
-      'local-models:install': ({ callerContext, args }) =>
-        localCommand(callerContext, 'local-models:install', () =>
-          dependencies.localModels.install(args[0])
-        ),
-      'local-models:cancel': ({ callerContext, args }) =>
-        localCommand(callerContext, 'local-models:cancel', () =>
-          dependencies.localModels.cancel(args[0])
-        ),
-      'local-models:remove': ({ callerContext, args }) =>
-        localCommand(callerContext, 'local-models:remove', () =>
-          dependencies.localModels.remove(args[0])
-        ),
-      'local-models:set-ocr-languages': ({ callerContext, args }) =>
-        localCommand(callerContext, 'local-models:set-ocr-languages', () =>
-          dependencies.localModels.setOcrLanguages(args[0])
-        )
+      'local-models:get-snapshot': ({ args }) => dependencies.localModels.getSnapshot(args[0]),
+      'local-models:install': ({ args }) => dependencies.localModels.install(args[0]),
+      'local-models:cancel': ({ args }) => dependencies.localModels.cancel(args[0]),
+      'local-models:remove': ({ args }) => dependencies.localModels.remove(args[0]),
+      'local-models:set-ocr-languages': ({ args }) =>
+        dependencies.localModels.setOcrLanguages(args[0])
     })
     scope.registerGroup(hostApplicationCommandGroups[10], {
       'pdf-structure:read-cached': ({ callerContext, callerLease, args: [request] }) =>
-        localCommand(callerContext, 'pdf-structure:read-cached', () =>
-          dependencies.pdfStructure.readCached(request, callerContext, callerLease)
-        ),
+        dependencies.pdfStructure.readCached(request, callerContext, callerLease),
       'pdf-structure:parse': ({ callerContext, callerLease, args: [request] }) =>
-        localCommand(callerContext, 'pdf-structure:parse', () =>
-          dependencies.pdfStructure.parse(request, callerContext, callerLease)
-        ),
+        dependencies.pdfStructure.parse(request, callerContext, callerLease),
       'pdf-structure:cancel': ({ callerContext, callerLease, args: [requestId] }) =>
-        localCommand(callerContext, 'pdf-structure:cancel', () =>
-          dependencies.pdfStructure.cancel(requestId, callerContext, callerLease)
-        ),
+        dependencies.pdfStructure.cancel(requestId, callerContext, callerLease),
       'pdf-structure:read-thumbnail': ({ callerContext, callerLease, args: [request] }) =>
-        localCommand(callerContext, 'pdf-structure:read-thumbnail', () =>
-          dependencies.pdfStructure.readThumbnail(request, callerContext, callerLease)
-        ),
+        dependencies.pdfStructure.readThumbnail(request, callerContext, callerLease),
       'pdf-structure:clear-cache': ({ callerContext, callerLease }) =>
-        localCommand(callerContext, 'pdf-structure:clear-cache', () =>
-          dependencies.pdfStructure.clearCache(callerContext, callerLease)
-        )
+        dependencies.pdfStructure.clearCache(callerContext, callerLease)
     })
     scope.registerGroup(hostApplicationCommandGroups[11], {
       'background-result-delivery:session-activity': ({ args }) =>

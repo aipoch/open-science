@@ -85,17 +85,17 @@ export const runtimeDescribeUsageContracts = {
 export const localModelsGetSnapshotContracts = {
   'localModels.getSnapshot': callable<
     (capability?: LocalModelCapability) => Promise<LocalModelSnapshot>
-  >()('local-models', ['local-models:get-snapshot', LOCAL]),
+  >()('local-models', ['local-models:get-snapshot', WEB]),
   'localModels.install': callable<
     (capability?: LocalModelCapability) => Promise<LocalModelSnapshot>
-  >()('local-models', ['local-models:install', LOCAL]),
+  >()('local-models', ['local-models:install', WEB]),
   'localModels.cancel': callable<
     (capability?: LocalModelCapability) => Promise<LocalModelSnapshot>
-  >()('local-models', ['local-models:cancel', LOCAL]),
+  >()('local-models', ['local-models:cancel', WEB]),
   'localModels.remove': callable<
     (capability?: LocalModelCapability) => Promise<LocalModelSnapshot>
-  >()('local-models', ['local-models:remove', LOCAL]),
+  >()('local-models', ['local-models:remove', WEB]),
   'localModels.setOcrLanguages': callable<
     (languages: readonly OcrLanguage[]) => Promise<LocalModelSnapshot>
-  >()('local-models', ['local-models:set-ocr-languages', LOCAL])
+  >()('local-models', ['local-models:set-ocr-languages', WEB])
 } as const

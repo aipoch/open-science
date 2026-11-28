@@ -28,17 +28,20 @@ describe('PDF reading authority', () => {
     const reader = new PdfStructureReader(owner)
     const registry = new ApplicationCallerLeaseRegistry()
     const current = registry.acquire({ leaseId: 'reader', surface: 'web' })
-    const caller = createWebCallerContext('reader')
+    const caller = createWebCallerContext('reader', { location: 'remote' })
     const lookup = { attachmentVersionId: 'version-1', page: 1 }
     const malformed = { ...lookup, path: '/private/user.pdf' }
     await expect(reader.readCached(malformed, caller, current.lease)).rejects.toThrow()
     await expect(
       reader.readCached(
         lookup,
-        createWebCallerContext('reader', { location: 'remote' }),
+        createWebCallerContext('reader', {
+          location: 'remote',
+          isAuthorizationCurrent: () => false
+        }),
         current.lease
       )
-    ).rejects.toThrow('Local PDF access')
+    ).rejects.toThrow('PDF access')
     expect(owner.readCached).not.toHaveBeenCalled()
     const pending = reader.readCached(lookup, caller, current.lease)
     expect(owner.readCached).toHaveBeenCalledWith(
@@ -48,7 +51,7 @@ describe('PDF reading authority', () => {
     )
     current.release()
     finish()
-    await expect(pending).rejects.toThrow('Local PDF access')
+    await expect(pending).rejects.toThrow('PDF access')
     expect(owner.acquire).not.toHaveBeenCalled()
   })
 
@@ -96,12 +99,12 @@ describe('PDF reading authority', () => {
     const reader = new PdfStructureReader(owner)
     const registry = new ApplicationCallerLeaseRegistry()
     const owned = registry.acquire({ leaseId: 'reader-a', surface: 'web' })
-    const caller = createWebCallerContext('reader-a'),
+    const caller = createWebCallerContext('reader-a', { location: 'remote' }),
       ownLease = owned.lease
     const pending = reader.parse(request, caller, ownLease)
     reader.cancel(
       request.requestId,
-      createWebCallerContext('reader-b'),
+      createWebCallerContext('reader-b', { location: 'remote' }),
       registry.acquire({ leaseId: 'reader-b', surface: 'web' }).lease
     )
     expect(release).not.toHaveBeenCalled()
@@ -128,14 +131,7 @@ describe('PDF reading authority', () => {
       navigation: [],
       issues: []
     })
-    await expect(pending).rejects.toThrow('Local PDF access')
-    await expect(
-      reader.parse(
-        request,
-        createWebCallerContext('remote', { location: 'remote' }),
-        registry.acquire({ leaseId: 'remote', surface: 'web' }).lease
-      )
-    ).rejects.toThrow('Local PDF access')
+    await expect(pending).rejects.toThrow('PDF access')
     expect(owner.acquire).toHaveBeenCalledOnce()
   })
   it('rejects renderer paths and reports cache cleanup without exposing filesystem paths', async () => {
@@ -150,7 +146,7 @@ describe('PDF reading authority', () => {
       }))
     }
     const reader = new PdfStructureReader(owner),
-      caller = createWebCallerContext('reader'),
+      caller = createWebCallerContext('reader', { location: 'remote' }),
       current = new ApplicationCallerLeaseRegistry().acquire({
         leaseId: 'reader',
         surface: 'web'
@@ -184,7 +180,7 @@ it.each(['upload-version', 'artifact-version'] as const)(
       clearCache: vi.fn()
     }
     const reader = new PdfStructureReader(owner)
-    const caller = createWebCallerContext('reader')
+    const caller = createWebCallerContext('reader', { location: 'remote' })
     const lease = new ApplicationCallerLeaseRegistry().acquire({
       leaseId: 'reader',
       surface: 'web'
@@ -214,9 +210,6 @@ it.each(['upload-version', 'artifact-version'] as const)(
         reader.parse({ ...input, ...extra } as typeof input, caller, lease)
       ).rejects.toThrow()
     }
-    await expect(
-      reader.parse(input, createWebCallerContext('remote', { location: 'remote' }), lease)
-    ).rejects.toThrow('Local PDF access')
     expect(owner.acquire).toHaveBeenCalledOnce()
   }
 )
