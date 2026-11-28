@@ -165,8 +165,11 @@ export const providerEndpoints = (
 ): ModelProtocol[] => {
   if (provider.type && isCodexSubscriptionProvider(provider.type)) return ['responses']
   const declared = provider.type === 'lab' && model ? provider.modelProtocols?.[model] : undefined
-  if (declared?.length) return [...declared]
-  if (provider.apiEndpoints && (provider.apiEndpoints.length > 0 || provider.type === 'official'))
+  if (declared) return [...declared]
+  if (
+    provider.apiEndpoints &&
+    (provider.apiEndpoints.length > 0 || provider.type === 'official' || provider.type === 'lab')
+  )
     return [...provider.apiEndpoints]
   return provider.type === 'lab' ? ['chat-completions', 'responses'] : ['messages']
 }

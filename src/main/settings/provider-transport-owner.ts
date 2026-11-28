@@ -41,6 +41,7 @@ import {
   normalizeMessagesRootUrl,
   resolveChatCompletionsUrl,
   resolveChatCompletionsBaseUrl,
+  resolveMessagesUrl,
   bufferChatCompletionsToolNames,
   type ResponsesNamespacedTool
 } from '@aipoch/providers/protocol'
@@ -382,8 +383,6 @@ class ProviderTransportOwner {
     ) {
       throw new Error('Harness requires a connected, versioned provider target.')
     }
-    if (usesLab && wire === 'messages')
-      throw new Error('Lab models do not expose the Messages API.')
     const endpoint =
       usesXaiOAuth || usesCodexOAuth
         ? undefined
@@ -391,7 +390,7 @@ class ProviderTransportOwner {
           ? resolveChatCompletionsUrl(provider)
           : wire === 'responses'
             ? `${resolveResponsesBaseUrl(provider)}/responses`
-            : `${normalizeMessagesRootUrl(provider.baseUrl ?? '')}/v1/messages`
+            : resolveMessagesUrl(provider.baseUrl ?? '')
     if (!usesXaiOAuth && !usesCodexOAuth) {
       if (!endpoint) throw new Error('Harness provider endpoint is unavailable.')
       const url = new URL(endpoint)
@@ -884,15 +883,20 @@ class ProviderTransportOwner {
               )
             : isLabProvider(candidate.provider.type)
               ? (() => {
-                  if (transport.kind !== 'opencode-openai')
-                    throw new Error('Lab models do not expose the Messages API.')
-                  const endpoint = resolveChatCompletionsUrl(candidate.provider)
+                  const wire =
+                    transport.kind === 'opencode-openai' ? 'chat-completions' : 'messages'
+                  const endpoint =
+                    wire === 'chat-completions'
+                      ? resolveChatCompletionsUrl(candidate.provider)
+                      : resolveMessagesUrl(candidate.provider.baseUrl ?? '')
                   if (!endpoint) throw new Error('The OpenCode Lab target is incomplete.')
                   return this.createProtocolForwardingBridge(
                     [
-                      this.labForwardingTarget(targetId, 'chat-completions', endpoint, candidate, {
+                      this.labForwardingTarget(targetId, wire, endpoint, candidate, {
                         ...(this.healthObservation(candidate) ?? {}),
-                        adaptStream: bufferChatCompletionsToolNames
+                        ...(wire === 'chat-completions'
+                          ? { adaptStream: bufferChatCompletionsToolNames }
+                          : {})
                       })
                     ],
                     targetId
@@ -1037,7 +1041,6 @@ class ProviderTransportOwner {
     target: ProviderRuntimeTarget,
     extra: Partial<ProtocolForwardingBridgeTarget> = {}
   ): ProtocolForwardingBridgeTarget {
-    if (wire === 'messages') throw new Error('Lab models do not expose the Messages API.')
     const prepared = this.prepareLabRequest(target, endpoint)
     return Object.freeze({
       id,
@@ -1087,18 +1090,33 @@ class ProviderTransportOwner {
             'messages',
             this.getXaiOAuthAccessToken
           )
-        : this.createMessagesBridge(
-            transport.targets.map(({ runtimeTarget, ...target }) => ({
-              ...target,
-              ...(runtimeTarget
-                ? {
-                    ...this.healthObservation(runtimeTarget),
-                    ...this.providerHttpAccess(runtimeTarget.provider)
-                  }
-                : {})
-            })),
-            transport.initialTargetId
-          )
+        : isLabProvider(input.activeTarget.provider.type)
+          ? this.createProtocolForwardingBridge(
+              transport.targets.map(({ id, runtimeTarget }) => {
+                const baseUrl = runtimeTarget?.provider.baseUrl
+                if (!runtimeTarget || !baseUrl)
+                  throw new Error('The Claude Lab target is incomplete.')
+                return this.labForwardingTarget(
+                  id,
+                  'messages',
+                  resolveMessagesUrl(baseUrl),
+                  runtimeTarget
+                )
+              }),
+              transport.initialTargetId
+            )
+          : this.createMessagesBridge(
+              transport.targets.map(({ runtimeTarget, ...target }) => ({
+                ...target,
+                ...(runtimeTarget
+                  ? {
+                      ...this.healthObservation(runtimeTarget),
+                      ...this.providerHttpAccess(runtimeTarget.provider)
+                    }
+                  : {})
+              })),
+              transport.initialTargetId
+            )
     try {
       const connection = await bridge.start()
       let released = false

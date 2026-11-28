@@ -41,13 +41,14 @@ describe('Lab shared contract', () => {
     expect(labModelLabel('lab:research-default')).toBe('research-default')
   })
 
-  it('maps bootstrap protocols to the two gateway routes only', () => {
+  it('maps bootstrap protocols to desktop routes', () => {
     expect(labProtocolsToEndpoints({ id: 'a', protocol: 'openai' })).toEqual(['chat-completions'])
     expect(labProtocolsToEndpoints({ id: 'a', protocols: ['openai', 'openai-response'] })).toEqual([
       'chat-completions',
       'responses'
     ])
-    expect(labProtocolsToEndpoints({ id: 'a', protocols: ['anthropic'] })).toEqual([])
+    expect(labProtocolsToEndpoints({ id: 'a', protocols: ['anthropic'] })).toEqual(['messages'])
+    expect(labProtocolsToEndpoints({ id: 'a', protocols: ['gemini'] })).toEqual([])
     expect(labProtocolsToEndpoints({ id: 'a', protocols: [] })).toEqual([])
     expect(labProtocolsToEndpoints({ id: 'a', protocol: '' })).toEqual([])
     expect(labProtocolsToEndpoints({ id: 'a' })).toEqual(['chat-completions'])
@@ -64,16 +65,32 @@ describe('Lab shared contract', () => {
     )
   })
 
-  it('limits the status summary to available models with a usable gateway route', () => {
+  it('keeps available models and their advertised protocols in the status summary', () => {
     const models = labModelSummaries([
-      { id: 'a', name: 'A', protocol: 'openai', available: true },
+      {
+        id: 'a',
+        name: 'A',
+        protocol: 'openai',
+        available: true,
+        pricing: { multiplier: 1.09, free: false }
+      },
       { id: 'lab:a' },
       { id: 'b', name: 'B', protocol: 'openai', enabled: false },
       { id: 'c', name: 'C', protocol: 'openai-response', available: false },
-      { id: 'unsupported', protocol: 'anthropic' }
+      { id: 'haiku', protocol: 'anthropic' },
+      { id: 'gemini', protocol: 'gemini', protocols: ['gemini'] }
     ])
-    expect(models.map((model) => model.id)).toEqual(['lab:a', 'lab:lab:a'])
-    expect(models[0]?.protocols).toEqual(['chat-completions'])
+    expect(models.map((model) => model.id)).toEqual([
+      'lab:a',
+      'lab:lab:a',
+      'lab:haiku',
+      'lab:gemini'
+    ])
+    expect(models[0]?.protocols).toEqual(['openai'])
+    expect(models[2]?.protocols).toEqual(['anthropic'])
+    expect(models[3]?.protocols).toEqual(['gemini'])
+    expect(models[0]?.pricing).toEqual({ multiplier: 1.09, free: false })
+    expect(models[1]).not.toHaveProperty('pricing')
     expect(models[1]?.protocols).toEqual(['chat-completions'])
   })
 })
@@ -122,50 +139,46 @@ describe('readLabModelCapabilities', () => {
 })
 
 describe('readLabUsage', () => {
-  it('narrows token, organization, effective and display amounts', () => {
-    const usage = readLabUsage({
-      available: true,
-      token: {
-        available: true,
-        name: 'osl:usr_1:1',
-        status: 'active',
-        quota: { limit: 500_000, used: 165_900, remaining: 334_100, unlimited: false }
-      },
-      org: {
-        available: true,
-        unlimited: false,
-        quota: { limit: 69_349_151, used: 166_271, remaining: 69_268_880, unlimited: false },
-        stale: true,
-        synced_at: '2026-11-16T08:40:00Z'
-      },
-      effective: { remaining: 334_100, limited_by: 'token' },
-      display: {
-        per_unit: 500_000,
-        exchange_rate: 7.3,
-        currency: 'CNY',
-        cny: {
-          token: { limit: 7.3, used: 2.42, remaining: 4.88 },
-          org: { limit: 1_012.3, used: 2.43, remaining: 1_009.87 }
-        },
-        usd: {
-          token: { limit: 1, used: 0.3318, remaining: 0.6682 },
-          org: { limit: 138.7, used: 0.33, remaining: 138.37 }
-        }
-      },
-      fetched_at: '2026-11-16T08:40:00Z',
-      stale: false
+  const snapshot = {
+    scale: 1000,
+    org_wallet: { balance_mp: 850_000 },
+    member_allowance: { unlimited: false, limit_mp: 200_000, remaining_mp: 155_125 },
+    effective: { remaining_mp: 155_125, limited_by: 'member' }
+  }
+
+  it('converts milli-points using the scale in the snapshot', () => {
+    expect(readLabUsage(snapshot)).toEqual({
+      organizationBalance: 850,
+      memberAllowance: { limit: 200, remaining: 155.125 },
+      availablePoints: 155.125
     })
-    expect(usage).toMatchObject({
-      available: true,
-      token: { available: true, status: 'active', quota: { remaining: 334_100 } },
-      org: { unlimited: false, stale: true, syncedAt: '2026-11-16T08:40:00Z' },
-      effective: { remaining: 334_100, limitedBy: 'token' },
-      display: { currency: 'CNY', cny: { token: { remaining: 4.88 } } },
-      fetchedAt: '2026-11-16T08:40:00Z',
-      stale: false
-    })
+    expect(readLabUsage({ ...snapshot, scale: 100 })?.availablePoints).toBe(1551.25)
   })
 
+  it('preserves a negative wallet balance and an unlimited member allowance', () => {
+    expect(
+      readLabUsage({
+        ...snapshot,
+        org_wallet: { balance_mp: -5 },
+        member_allowance: { unlimited: true, limit_mp: null, remaining_mp: null },
+        effective: { remaining_mp: 0, limited_by: 'org' }
+      })
+    ).toEqual({ organizationBalance: -0.005, memberAllowance: null, availablePoints: 0 })
+  })
+
+  it.each([
+    { ...snapshot, scale: 0 },
+    { ...snapshot, scale: 1.5 },
+    { ...snapshot, org_wallet: { balance_mp: '850000' } },
+    { ...snapshot, effective: { remaining_mp: -1 } },
+    { ...snapshot, member_allowance: { unlimited: false, limit_mp: null, remaining_mp: null } },
+    { available: true, token: { available: true } }
+  ])('rejects an invalid or legacy points snapshot %#', (body) => {
+    expect(readLabUsage(body)).toBeUndefined()
+  })
+})
+
+describe('mapLabGatewayError', () => {
   it.each([
     [
       404,
@@ -173,6 +186,9 @@ describe('readLabUsage', () => {
       'The model has no available upstream channel right now (it may not be published or its channel may be disabled).'
     ],
     [402, 'insufficient_quota', 'The upstream subscription or quota is exhausted.'],
+    [402, 'INSUFFICIENT_POINTS', 'Your organization has insufficient Lab points.'],
+    [402, 'MEMBER_LIMIT_REACHED', 'You have reached your Lab points allowance for this period.'],
+    [403, 'MODEL_NOT_PRICED', 'This Lab model does not have pricing configured.'],
     [400, 'context_length_exceeded', 'The context exceeds the model context window.'],
     [
       402,
@@ -206,15 +222,5 @@ describe('readLabUsage', () => {
     })
     expect(mapLabGatewayError(502, { error: { code: 'UNKNOWN_CODE' } })).toBeUndefined()
     expect(mapLabGatewayError(502, 'not-an-object')).toBeUndefined()
-  })
-
-  it('preserves unavailable responses and drops malformed nested values', () => {
-    expect(readLabUsage({ available: false, reason: '额度查询未启用' })).toMatchObject({
-      available: false,
-      reason: '额度查询未启用',
-      token: { available: false },
-      org: { available: false, unlimited: false, stale: false }
-    })
-    expect(readLabUsage('invalid')).toBeUndefined()
   })
 })

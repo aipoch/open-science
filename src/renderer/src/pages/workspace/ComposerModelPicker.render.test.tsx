@@ -20,6 +20,7 @@ import {
   resolveReasoningEffortControl
 } from '../../../../shared/reasoning-effort'
 import { createInitialSettingsState, useSettingsStore } from '@/stores/settings-store'
+import { LAB_PROVIDER_ID, type LabModelSummary } from '../../../../shared/lab'
 import { ComposerModelPicker } from './ComposerModelPicker'
 import { incompatibilityReason } from './composer-model-picker-utils'
 import * as bridgePolicy from '../../../../shared/provider-bridge-policy'
@@ -655,6 +656,109 @@ describe('ComposerModelPicker', () => {
 
     const trigger = container.querySelector('[aria-label="Select model"]')
     expect(trigger?.textContent).toContain('my-model')
+  })
+
+  it('shows each Lab model’s points multiplier in the model menu', async () => {
+    const models: LabModelSummary[] = [
+      {
+        id: 'lab:model-a',
+        name: 'Model A',
+        protocols: ['responses'],
+        streaming: true,
+        pricing: { multiplier: 0.22, free: false }
+      },
+      {
+        id: 'lab:model-b',
+        name: 'Model B',
+        protocols: ['responses'],
+        streaming: true,
+        pricing: { multiplier: 0, free: true }
+      },
+      {
+        id: 'lab:legacy',
+        name: 'Legacy',
+        protocols: ['responses'],
+        streaming: true
+      },
+      {
+        id: 'lab:non-streaming',
+        name: 'Non-streaming',
+        protocols: ['responses'],
+        streaming: false,
+        pricing: { multiplier: 1, free: false }
+      }
+    ]
+    useSettingsStore.setState({
+      ...codexFramework,
+      providers: [
+        provider({
+          id: LAB_PROVIDER_ID,
+          name: 'Lab',
+          type: 'lab',
+          apiEndpoints: ['responses'],
+          models: models.map(({ id }) => id),
+          modelStreaming: { 'lab:non-streaming': false }
+        }),
+        provider({ models: ['lab:model-a'], apiEndpoints: ['responses'] })
+      ],
+      lab: { state: 'authenticated', models },
+      activeProviderId: LAB_PROVIDER_ID,
+      activeModel: 'lab:model-a'
+    })
+    render()
+
+    await openMenu(container.querySelector('[aria-label="Select model"]')!)
+    await openSubmenu(modelRowTrigger()!)
+
+    expect(radioItems().map((item) => item.textContent)).toEqual([
+      'model-a0.22x',
+      'model-bFree',
+      'legacy',
+      'lab:model-a'
+    ])
+    expect(radioItems()[0]?.getAttribute('aria-checked')).toBe('true')
+    const unsupported = menuItems().find((item) => item.getAttribute('aria-disabled') === 'true')
+    expect(unsupported?.textContent).toBe('non-streaming1.00xunsupported')
+
+    act(() => radioItems()[1]!.click())
+    expect(onChange).toHaveBeenCalledWith({
+      providerId: LAB_PROVIDER_ID,
+      model: 'lab:model-b',
+      reasoningEffort: 'default'
+    })
+  })
+
+  it('lists incompatible Lab models even when the Agent cannot use any Lab model', async () => {
+    const model = 'lab:claude-haiku-5-5'
+    useSettingsStore.setState({
+      ...codexFramework,
+      providers: [
+        provider({
+          id: LAB_PROVIDER_ID,
+          name: 'Lab',
+          type: 'lab',
+          apiEndpoints: ['messages'],
+          modelProtocols: { [model]: ['messages'], 'lab:gemini': [] },
+          models: [model, 'lab:gemini']
+        })
+      ]
+    })
+    render()
+
+    await openMenu(container.querySelector('[aria-label="No compatible model"]')!)
+    await openSubmenu(modelRowTrigger()!)
+
+    const rows = menuItems().filter((item) => item.getAttribute('aria-disabled') === 'true')
+    expect(rows.map((row) => row.textContent)).toEqual([
+      'claude-haiku-5-5unsupported',
+      'geminiunsupported'
+    ])
+    expect(rows[0]?.getAttribute('aria-label')).toContain('/v1/messages')
+    expect(rows[1]?.getAttribute('aria-label')).toBe(
+      'This Lab model has no API protocol supported by the desktop app.'
+    )
+    act(() => rows[0]!.click())
+    expect(onChange).not.toHaveBeenCalled()
   })
 
   it('lets a missing-provider Session explicitly select an available provider and model', async () => {

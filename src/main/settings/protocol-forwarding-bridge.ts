@@ -32,7 +32,10 @@ import {
   type ProviderRequestPolicy
 } from '@aipoch/providers/transport'
 
+import { countMessagesInputTokens } from '@aipoch/providers/protocol'
+
 const WIRE_PATH = {
+  messages: '/v1/messages',
   'chat-completions': '/v1/chat/completions',
   responses: '/v1/responses'
 } as const
@@ -223,6 +226,12 @@ export class ProtocolForwardingBridge {
     }
 
     const requestUrl = request.url
+    if (this.wire === 'messages' && requestUrl.pathname === '/v1/messages/count_tokens') {
+      json(response, 200, {
+        input_tokens: countMessagesInputTokens(await request.readJsonObject())
+      })
+      return
+    }
     if (requestUrl.pathname !== WIRE_PATH[this.wire]) {
       json(response, 404, { error: { type: 'not_found_error', message: 'Not found' } })
       return
@@ -252,16 +261,23 @@ export class ProtocolForwardingBridge {
             headers?: Readonly<Record<string, string>>
           }>
         | undefined
-    ): Headers =>
-      resolved
-        ? new Headers({
-            'content-type': 'application/json',
-            accept: 'text/event-stream',
-            'user-agent': 'open-science-agent/0.1.0',
-            ...resolved.headers,
-            authorization: `Bearer ${resolved.key}`
-          })
-        : requestHeaders(request, target.key)
+    ): Headers => {
+      if (!resolved) return requestHeaders(request, target.key)
+      const headers = new Headers({
+        'content-type': 'application/json',
+        accept: 'text/event-stream',
+        'user-agent': 'open-science-agent/0.1.0',
+        ...resolved.headers,
+        authorization: `Bearer ${resolved.key}`
+      })
+      if (this.wire === 'messages') {
+        for (const name of ['anthropic-version', 'anthropic-beta']) {
+          const value = request.headers[name]
+          if (typeof value === 'string') headers.set(name, value)
+        }
+      }
+      return headers
+    }
     const headersToForward = forwardingHeaders(connection)
     const replayKey = providerRequestFingerprint(
       target.id,
@@ -368,7 +384,7 @@ export class ProtocolForwardingBridge {
         target.onProviderFailure,
         {
           model: target.model,
-          endpoint: target.wire === 'responses' ? 'responses' : 'chat-completions',
+          endpoint: target.wire,
           startedAt
         },
         upstream.status,

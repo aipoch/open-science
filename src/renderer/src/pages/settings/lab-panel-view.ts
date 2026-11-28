@@ -45,15 +45,18 @@ const LAB_PROTOCOL_LABELS: Record<string, string> = {
   'chat-completions': 'Chat Completions',
   openai: 'Chat Completions',
   responses: 'Responses',
-  'openai-response': 'Responses'
+  'openai-response': 'Responses',
+  anthropic: 'Anthropic Messages',
+  messages: 'Anthropic Messages',
+  gemini: 'Gemini'
 }
 
 // Protocol labels are technical identifiers and intentionally stay in English in every locale; the
 // panel still routes the returned string through t() so the copy boundary stays uniform.
 export const labModelProtocolLabel = (protocols: readonly string[]): string => {
-  const labels = protocols
-    .map((protocol) => LAB_PROTOCOL_LABELS[protocol.toLowerCase()])
-    .filter((label): label is string => label !== undefined)
+  const labels = protocols.map((protocol) =>
+    Object.hasOwn(LAB_PROTOCOL_LABELS, protocol) ? LAB_PROTOCOL_LABELS[protocol] : protocol
+  )
   const unique = [...new Set(labels)]
-  return unique.length > 0 ? unique.join(' · ') : 'Chat Completions'
+  return unique.join(' · ')
 }

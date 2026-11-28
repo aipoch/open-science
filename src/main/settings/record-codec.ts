@@ -350,7 +350,7 @@ export const sanitizeProvider = (value: unknown): StoredProvider | undefined => 
             .filter((entry): entry is ModelProtocol => entry !== undefined)
         )
       ]
-      if (protocols.length > 0) entries.push([modelId, protocols])
+      if (protocols.length > 0 || type === 'lab') entries.push([modelId, protocols])
       if (entries.length >= PROVIDER_RESOURCE_LIMITS.fetchedModels) break
     }
     if (entries.length > 0) modelProtocols = Object.fromEntries(entries)
@@ -450,7 +450,8 @@ export const sanitizeProvider = (value: unknown): StoredProvider | undefined => 
   if (reasoningEffortTransport !== undefined && type === 'custom') {
     provider.reasoningEffortTransport = reasoningEffortTransport
   }
-  if (apiEndpoints.length > 0) provider.apiEndpoints = apiEndpoints
+  if (apiEndpoints.length > 0 || (type === 'lab' && Array.isArray(value.apiEndpoints)))
+    provider.apiEndpoints = apiEndpoints
   if (modelProtocols) provider.modelProtocols = modelProtocols
   if (modelCapabilities) provider.modelCapabilities = modelCapabilities
   if (modelReasoningEfforts) provider.modelReasoningEfforts = modelReasoningEfforts

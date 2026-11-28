@@ -108,72 +108,89 @@ describe('Lab settings panel', () => {
       state: 'authenticated',
       accountName: 'Ada Lovelace',
       deviceName: 'MacBook Pro',
-      modelCount: 2,
+      modelCount: 4,
       models: [
         {
           id: 'lab:model-a',
           name: 'Model A',
-          protocols: ['chat-completions'],
-          streaming: true
+          protocols: ['anthropic'],
+          streaming: true,
+          pricing: { multiplier: 0.22, free: false }
         },
-        { id: 'lab:model-b', name: 'Model B', protocols: ['responses'], streaming: false }
+        {
+          id: 'lab:model-b',
+          name: 'Model B',
+          protocols: ['responses'],
+          streaming: false,
+          pricing: { multiplier: 0, free: true }
+        },
+        {
+          id: 'lab:model-c',
+          name: 'Model C',
+          protocols: ['responses'],
+          streaming: true,
+          pricing: { multiplier: 0.0001, free: false }
+        },
+        { id: 'lab:legacy', name: 'Legacy Model', protocols: ['responses'], streaming: true }
       ]
     })
 
     expect(container.textContent).toContain('Signed in as Ada Lovelace')
     expect(container.textContent).toContain('Device: MacBook Pro')
     expect(container.textContent).toContain('Model A')
-    expect(container.textContent).toContain('Chat Completions')
+    expect(container.textContent).toContain('Anthropic Messages')
     expect(container.textContent).toContain('Model B')
     expect(container.textContent).toContain('Responses')
     expect(container.textContent).toContain('Non-streaming')
+    const rows = container.querySelectorAll('li')
+    expect(rows[0]?.textContent).toContain('0.22x')
+    expect(rows[1]?.textContent).toContain('Free')
+    expect(rows[2]?.textContent).toContain('0.0001x')
+    expect(rows[3]?.textContent).toBe('Legacy ModelResponses')
   })
 
-  it('shows token and organization usage in the authenticated panel', async () => {
+  it('shows available points, organization balance, and the remaining member allowance', async () => {
     await renderPanel({
       state: 'authenticated',
-      accountName: 'Ada Lovelace',
-      deviceName: 'MacBook Pro',
-      modelCount: 0,
-      models: [],
       usage: {
-        available: true,
-        token: {
-          available: true,
-          status: 'active',
-          quota: { limit: 500_000, used: 165_900, remaining: 334_100, unlimited: false }
-        },
-        org: {
-          available: true,
-          unlimited: false,
-          quota: { limit: 69_349_151, used: 166_271, remaining: 69_268_880, unlimited: false },
-          stale: false
-        },
-        effective: { remaining: 334_100, limitedBy: 'token' },
-        display: {
-          perUnit: 500_000,
-          exchangeRate: 7.3,
-          currency: 'CNY',
-          cny: {
-            token: { limit: 7.3, used: 2.42, remaining: 4.88 },
-            org: { limit: 1_012.3, used: 2.43, remaining: 1_009.87 }
-          },
-          usd: {
-            token: { limit: 1, used: 0.3318, remaining: 0.6682 },
-            org: { limit: 138.7, used: 0.33, remaining: 138.37 }
-          }
-        },
-        stale: false
+        organizationBalance: 1_850,
+        memberAllowance: { limit: 200, remaining: 155.125 },
+        availablePoints: 155.125
       }
     })
 
-    expect(container.textContent).toContain('Usage')
-    expect(container.textContent).toContain('Access token quota')
-    expect(container.textContent).toContain('¥4.88 / ¥7.30')
-    expect(container.textContent).not.toContain('Organization wallet')
-    expect(container.querySelector('dl > :last-child dd')?.textContent).toBe('¥4.88')
+    const points = container.querySelector('[data-settings-anchor="lab.usage"]')
+    expect([...points!.querySelectorAll('dt')].map((node) => node.textContent)).toEqual([
+      'Available points',
+      'Organization balance',
+      'Remaining member allowance'
+    ])
+    expect([...points!.querySelectorAll('dd')].map((node) => node.textContent)).toEqual([
+      '155.125',
+      '1,850',
+      '155.125 / 200'
+    ])
     await click('Refresh models')
     expect(settingsApi.labRefresh).toHaveBeenCalledTimes(1)
+  })
+
+  it('shows an unlimited member allowance alongside the available points', async () => {
+    await renderPanel({
+      state: 'authenticated',
+      usage: { organizationBalance: -0.005, memberAllowance: null, availablePoints: 0 }
+    })
+    expect([...container.querySelectorAll('dl dd')].map((node) => node.textContent)).toEqual([
+      '0',
+      '-0.005',
+      'Unlimited'
+    ])
+  })
+
+  it('shows that points are unavailable after a failed request', async () => {
+    await renderPanel({ state: 'authenticated', usage: null })
+
+    expect(container.textContent).toContain('Could not load Lab points.')
+    expect(buttonWithText('Refresh models')).toBeDefined()
   })
 
   it('shows the blocked reason and retries the connection check', async () => {

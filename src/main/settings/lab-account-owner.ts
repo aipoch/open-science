@@ -641,7 +641,7 @@ export class LabAccountOwner {
     return this.api.bootstrap(document.serverUrl, refreshed)
   }
 
-  // Quota is optional information: a slow/failed usage request must never fail a Lab login or
+  // A slow or failed points request must never fail a Lab login or
   // catalog refresh. Fetch it after publishing the authenticated view and update the view later.
   private async loadUsage(serverUrl: string, generation: number): Promise<LabUsage | undefined> {
     if (generation !== this.refreshGeneration) return undefined
@@ -669,11 +669,10 @@ export class LabAccountOwner {
       .then((usage) => {
         if (
           request === this.usageRequest &&
-          usage &&
           this.isCurrentConnection(generation, serverUrl) &&
           this.view.state === 'authenticated'
         ) {
-          this.publish({ ...this.view, usage })
+          this.publish({ ...this.view, usage: usage ?? null })
         }
       })
       .catch(() => undefined)

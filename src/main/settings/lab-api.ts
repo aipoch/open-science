@@ -357,6 +357,8 @@ export class LabApi {
     const models: LabBootstrapModel[] = Array.isArray(body.models)
       ? body.models.flatMap((candidate): LabBootstrapModel[] => {
           if (!isRecord(candidate) || typeof candidate.id !== 'string') return []
+          const pricing = isRecord(candidate.pricing) ? candidate.pricing : undefined
+          const multiplier = pricing?.display_multiplier
           return [
             {
               id: candidate.id,
@@ -378,7 +380,10 @@ export class LabApi {
               ...(typeof candidate.available === 'boolean'
                 ? { available: candidate.available }
                 : {}),
-              ...(isRecord(candidate.capabilities) ? { capabilities: candidate.capabilities } : {})
+              ...(isRecord(candidate.capabilities) ? { capabilities: candidate.capabilities } : {}),
+              ...(typeof multiplier === 'number' && Number.isFinite(multiplier) && multiplier >= 0
+                ? { pricing: { multiplier, free: pricing?.free === true } }
+                : {})
             }
           ]
         })

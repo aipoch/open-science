@@ -1,11 +1,15 @@
 {
   "ownerPaths": [
+    "src/renderer/src/lib/lab-model-pricing.ts",
     "src/renderer/src/pages/settings/LabPanel.tsx",
     "src/renderer/src/pages/settings/LabPanel.render.test.tsx",
     "src/renderer/src/pages/settings/lab-panel-view.ts"
   ],
-  "interfacePaths": ["src/renderer/src/pages/settings/LabPanel.tsx"],
-  "consumerModules": ["settings_page_composition"],
+  "interfacePaths": [
+    "src/renderer/src/lib/lab-model-pricing.ts",
+    "src/renderer/src/pages/settings/LabPanel.tsx"
+  ],
+  "consumerModules": ["settings_page_composition", "workspace_conversation"],
   "testFiles": {
     "owner": ["src/renderer/src/pages/settings/LabPanel.render.test.tsx"],
     "contract": [],

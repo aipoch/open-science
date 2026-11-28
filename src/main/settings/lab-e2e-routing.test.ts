@@ -14,6 +14,8 @@ vi.mock('./crypto', () => ({
 
 import { buildConfiguredModelCatalog } from '../../shared/configured-model-catalog'
 import { LAB_PROVIDER_ID } from '../../shared/lab'
+import { getAgentFramework } from '../agent-framework'
+import { BackendRoutePlanner } from './backend-route-planner'
 import { LabAccountOwner } from './lab-account-owner'
 import type { LabApi } from './lab-api'
 import { LabCredentialStore } from './lab-credential-store'
@@ -43,13 +45,20 @@ afterEach(async () => {
 
 describe('Lab end-to-end model routing', () => {
   it('goes from bootstrap catalog to the gateway with the public model id and live credential', async () => {
-    let received: { authorization?: string; model?: string } = {}
+    let received: {
+      path?: string
+      authorization?: string
+      anthropicVersion?: string
+      model?: string
+    } = {}
     const gateway = createServer((request, response) => {
       let body = ''
       request.on('data', (chunk) => (body += String(chunk)))
       request.on('end', () => {
         received = {
+          path: request.url,
           authorization: request.headers.authorization,
+          anthropicVersion: request.headers['anthropic-version'] as string | undefined,
           model: (JSON.parse(body) as { model?: string }).model
         }
         response.writeHead(200, { 'content-type': 'application/json' })
@@ -104,7 +113,9 @@ describe('Lab end-to-end model routing', () => {
             enabled: true,
             available: true
           },
-          { id: 'lab:research-default', name: 'Prefixed Research', protocol: 'openai' }
+          { id: 'lab:research-default', name: 'Prefixed Research', protocol: 'openai' },
+          { id: 'claude-haiku-5-5', name: 'Claude Haiku 5.5', protocol: 'anthropic' },
+          { id: 'gemini', name: 'Gemini', protocol: 'gemini' }
         ],
         default_model_id: 'lab:research-default',
         model_base_url: '/v1'
@@ -124,9 +135,8 @@ describe('Lab end-to-end model routing', () => {
     expect((await owner.check()).state).toBe('authenticated')
 
     const projection = new ProviderRuntimeProjectionOwner()
-    const labRecord = (await repository.getSettings()).providers.find(
-      (provider) => provider.id === LAB_PROVIDER_ID
-    )!
+    const settings = await repository.getSettings()
+    const labRecord = settings.providers.find((provider) => provider.id === LAB_PROVIDER_ID)!
     const catalog = buildConfiguredModelCatalog({
       providers: [projection.toProviderView(labRecord)],
       frameworkId: 'open-science-agent',
@@ -142,7 +152,9 @@ describe('Lab end-to-end model routing', () => {
         model: 'lab:lab:research-default',
         label: 'lab:research-default',
         selectable: true
-      })
+      }),
+      expect.objectContaining({ model: 'lab:claude-haiku-5-5', selectable: true }),
+      expect.objectContaining({ model: 'lab:gemini', selectable: false })
     ])
 
     const framework = {
@@ -165,30 +177,85 @@ describe('Lab end-to-end model routing', () => {
       createProtocolForwardingBridge: (targets, targetId, options) =>
         new ProtocolForwardingBridge(targets, targetId, fetch, options)
     })
+    const haikuModel = 'lab:claude-haiku-5-5'
+    const haikuTarget = projection.resolveRuntimeTarget(
+      labRecord,
+      { kind: 'required', model: haikuModel },
+      framework
+    )
+    const send = (baseUrl: string, token: string, path: string, model: string): Promise<Response> =>
+      fetch(`${baseUrl}${path}`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${token}`,
+          'content-type': 'application/json',
+          'anthropic-version': '2023-06-01'
+        },
+        body: JSON.stringify({
+          model,
+          stream: false,
+          messages: [{ role: 'user', content: 'hello' }]
+        })
+      })
+
     for (const [target, expectedId] of [
       [defaultTarget, 'lab:research-default'],
       [explicitTarget, 'research-default'],
-      [{ ...defaultTarget, effectiveModel: undefined }, 'lab:research-default']
+      [{ ...defaultTarget, effectiveModel: undefined }, 'lab:research-default'],
+      [haikuTarget, 'claude-haiku-5-5']
     ] as const) {
       const lease = await transports.acquireHarness(target, new AbortController().signal)
       try {
-        const response = await fetch(`${lease.connection.baseUrl}/v1/chat/completions`, {
-          method: 'POST',
-          headers: {
-            authorization: `Bearer ${lease.connection.token}`,
-            'content-type': 'application/json'
-          },
-          body: JSON.stringify({
-            model: target.effectiveModel ?? target.provider.model,
-            stream: false,
-            messages: [{ role: 'user', content: 'hello' }]
-          })
-        })
+        const path = lease.route.protocol === 'messages' ? '/v1/messages' : '/v1/chat/completions'
+        const response = await send(
+          lease.connection.baseUrl,
+          lease.connection.token,
+          path,
+          target.effectiveModel ?? target.provider.model!
+        )
+        expect(received.path).toBe(path)
+        expect(received.anthropicVersion).toBe(path === '/v1/messages' ? '2023-06-01' : undefined)
         expect(response.status).toBe(200)
         expect(received.authorization).toBe('Bearer at_live')
         expect(received.model).toBe(expectedId)
       } finally {
         await lease.release()
+      }
+    }
+
+    const planner = new BackendRoutePlanner({ providers: projection })
+    for (const id of ['opencode', 'claude-code', 'pi'] as const) {
+      const agent = getAgentFramework(id)
+      const target = projection.resolveRuntimeTarget(
+        labRecord,
+        { kind: 'required', model: haikuModel },
+        agent
+      )
+      expect(target.frameworkCompatible).toBe(true)
+      const plan = planner.planBackend({
+        settings,
+        frameworkId: id,
+        target,
+        effortIntent: 'default',
+        conversationSkillImportEnabled: false
+      })
+      const transport = await transports.acquire({ activeTarget: target, plan })
+      try {
+        const baseUrl = transport.provider?.baseUrl ?? transport.providerConfiguration?.baseUrl
+        const token =
+          transport.provider?.key ?? transport.providerConfiguration?.headers?.['x-api-key']
+        expect(baseUrl, id).toBeDefined()
+        expect(token, id).toBeDefined()
+        const response = await send(baseUrl!, token!, '/v1/messages', haikuModel)
+        expect(response.status, id).toBe(200)
+        expect(received).toEqual({
+          path: '/v1/messages',
+          authorization: 'Bearer at_live',
+          anthropicVersion: '2023-06-01',
+          model: 'claude-haiku-5-5'
+        })
+      } finally {
+        await transport.release()
       }
     }
   })

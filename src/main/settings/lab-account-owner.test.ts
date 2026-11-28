@@ -35,7 +35,8 @@ const BOOTSTRAP: LabBootstrap = {
       protocols: ['openai'],
       streaming: true,
       enabled: true,
-      available: true
+      available: true,
+      pricing: { multiplier: 1.09, free: false }
     }
   ],
   default_model_id: 'research-default',
@@ -100,33 +101,9 @@ const seedSettings = async (dir: string): Promise<void> => {
 }
 
 const USAGE: LabUsage = {
-  available: true,
-  token: {
-    available: true,
-    status: 'active',
-    quota: { limit: 500_000, used: 165_900, remaining: 334_100, unlimited: false }
-  },
-  org: {
-    available: true,
-    unlimited: false,
-    quota: { limit: 69_349_151, used: 166_271, remaining: 69_268_880, unlimited: false },
-    stale: false
-  },
-  effective: { remaining: 334_100, limitedBy: 'token' },
-  display: {
-    perUnit: 500_000,
-    exchangeRate: 7.3,
-    currency: 'CNY',
-    cny: {
-      token: { limit: 7.3, used: 2.42, remaining: 4.88 },
-      org: { limit: 1_012.3, used: 2.43, remaining: 1_009.87 }
-    },
-    usd: {
-      token: { limit: 1, used: 0.3318, remaining: 0.6682 },
-      org: { limit: 138.7, used: 0.33, remaining: 138.37 }
-    }
-  },
-  stale: false
+  organizationBalance: 850,
+  memberAllowance: { limit: 200, remaining: 155.125 },
+  availablePoints: 155.125
 }
 
 const createApi = (): Record<string, ReturnType<typeof vi.fn>> => ({
@@ -194,6 +171,7 @@ describe('Lab account owner', () => {
     expect(view.accountId).toBe('usr_1')
     expect(view.accountName).toBe('Researcher')
     expect(view.modelCount).toBe(1)
+    expect(view.models?.[0]?.pricing).toEqual({ multiplier: 1.09, free: false })
 
     const settings = await repository.getSettings()
     for (const key of [
@@ -224,10 +202,22 @@ describe('Lab account owner', () => {
     await seedSession(new LabCredentialStore(dir))
 
     await owner.check()
-    await vi.waitFor(() => expect(owner.getView().usage).toMatchObject({ available: true }))
+    await vi.waitFor(() => expect(owner.getView().usage).toEqual(USAGE))
     expect(owner.getView().accountId).toBe(BOOTSTRAP.user.id)
-    expect(owner.getView().usage?.effective?.limitedBy).toBe('token')
     expect(api.usage).toHaveBeenCalledWith(SERVER, 'at_1')
+  })
+
+  it('keeps the authenticated catalog usable when the points request fails', async () => {
+    const dir = await createRoot()
+    await seedSettings(dir)
+    const api = createApi()
+    api.usage.mockRejectedValueOnce(new LabApiError('invalid-response', 'invalid points snapshot'))
+    const { owner } = await createOwner(dir, api)
+    await seedSession(new LabCredentialStore(dir))
+
+    await owner.check()
+    await vi.waitFor(() => expect(owner.getView().usage).toBeNull())
+    expect(owner.getView()).toMatchObject({ state: 'authenticated', modelCount: 1 })
   })
 
   it('does not refresh an almost-expired token just to read optional usage', async () => {
@@ -253,7 +243,7 @@ describe('Lab account owner', () => {
     expect(owner.getView().state).toBe('authenticated')
   })
 
-  it('publishes only the latest quota response on the same connection', async () => {
+  it('publishes only the latest points response on the same connection', async () => {
     const dir = await createRoot()
     await seedSettings(dir)
     const api = createApi()
@@ -282,16 +272,13 @@ describe('Lab account owner', () => {
 
     resolveSecond?.({
       ...USAGE,
-      effective: { remaining: 25, limitedBy: 'org' }
+      availablePoints: 25
     })
-    await vi.waitFor(() => expect(owner.getView().usage?.effective?.remaining).toBe(25))
-    resolveFirst?.({
-      ...USAGE,
-      effective: { remaining: 334_100, limitedBy: 'token' }
-    })
+    await vi.waitFor(() => expect(owner.getView().usage?.availablePoints).toBe(25))
+    resolveFirst?.(USAGE)
     await new Promise((resolve) => setTimeout(resolve, 0))
 
-    expect(owner.getView().usage?.effective?.remaining).toBe(25)
+    expect(owner.getView().usage?.availablePoints).toBe(25)
   })
 
   it('coalesces concurrent refreshes into one request', async () => {

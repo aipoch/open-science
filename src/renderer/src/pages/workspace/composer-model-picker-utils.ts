@@ -65,9 +65,13 @@ export const modelUnavailableReason = (
     )
   }
 
+  const endpoints = configuredModelApiEndpoints(provider, option.metadata, option.model)
+  if (provider.type === 'lab' && endpoints.length === 0) {
+    return t('This Lab model has no API protocol supported by the desktop app.')
+  }
   return t('{{model}} uses {{modelRoutes}}, but {{framework}} supports {{frameworkRoutes}}.', {
     model: option.label,
-    modelRoutes: routeList(configuredModelApiEndpoints(provider, option.metadata, option.model), t),
+    modelRoutes: routeList(endpoints, t),
     framework: framework.displayName,
     frameworkRoutes: routeList(frameworkEndpoints, t)
   })

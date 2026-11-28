@@ -163,8 +163,15 @@ describe('Lab API client', () => {
               modalities: { input: ['text', 'image'] },
               limit: { context: 1_000_000, output: 64_000 }
             },
+            pricing: {
+              display_multiplier: 1.09,
+              free: false,
+              input_points_per_1m: 1000
+            },
             upstream_model: 'must-not-be-used'
           },
+          { id: 'free', pricing: { display_multiplier: 0, free: true } },
+          { id: 'invalid-pricing', pricing: { display_multiplier: -1 } },
           { id: 'legacy' },
           { id: 'invalid-protocol', protocol: 42 },
           { id: 'invalid-protocols', protocols: 'openai' }
@@ -186,7 +193,10 @@ describe('Lab API client', () => {
       }
     })
     expect(bootstrap.models[0]).not.toHaveProperty('upstream_model')
+    expect(bootstrap.models[0]?.pricing).toEqual({ multiplier: 1.09, free: false })
     expect(bootstrap.models.slice(1)).toEqual([
+      { id: 'free', pricing: { multiplier: 0, free: true } },
+      { id: 'invalid-pricing' },
       { id: 'legacy' },
       { id: 'invalid-protocol', protocol: '' },
       { id: 'invalid-protocols', protocols: [] }
@@ -206,44 +216,30 @@ describe('Lab API client', () => {
     await expect(api.bootstrap(SERVER, 'at_1')).rejects.toMatchObject({ code: 'invalid-response' })
   })
 
-  it('reads the authenticated usage snapshot without exposing the token', async () => {
+  it('reads the authenticated points snapshot without exposing the token', async () => {
     const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
       jsonResponse(200, {
-        available: true,
-        token: {
-          available: true,
-          name: 'osl:usr_1:1',
-          status: 'active',
-          quota: { limit: 500_000, used: 165_900, remaining: 334_100, unlimited: false }
-        },
-        org: {
-          available: true,
+        scale: 1000,
+        org_wallet: { balance_mp: 850_000, total_granted_mp: 1_000_000, total_used_mp: 150_000 },
+        member_allowance: {
           unlimited: false,
-          quota: { limit: 69_349_151, used: 166_271, remaining: 69_268_880, unlimited: false }
+          limit_mp: 200_000,
+          used_mp: 45_000,
+          remaining_mp: 155_000,
+          reset_period: 'monthly',
+          period_started_at: '2026-11-01T00:00:00+08:00',
+          period_ends_at: '2026-12-01T00:00:00+08:00'
         },
-        effective: { remaining: 334_100, limited_by: 'token' },
-        display: {
-          per_unit: 500_000,
-          exchange_rate: 7.3,
-          currency: 'CNY',
-          cny: {
-            token: { limit: 7.3, used: 2.42, remaining: 4.88 },
-            org: { limit: 1_012.3, used: 2.43, remaining: 1_009.87 }
-          },
-          usd: {
-            token: { limit: 1, used: 0.3318, remaining: 0.6682 },
-            org: { limit: 138.7, used: 0.33, remaining: 138.37 }
-          }
-        },
-        stale: false
+        effective: { remaining_mp: 155_000, limited_by: 'member' },
+        fetched_at: '2026-11-24T12:00:00Z'
       })
     )
     const api = new LabApi({ fetch: fetchMock })
     const usage = await api.usage(SERVER, 'at_1')
-    expect(usage).toMatchObject({
-      available: true,
-      token: { available: true, quota: { remaining: 334_100 } },
-      effective: { limitedBy: 'token' }
+    expect(usage).toEqual({
+      organizationBalance: 850,
+      memberAllowance: { limit: 200, remaining: 155 },
+      availablePoints: 155
     })
     const call = fetchMock.mock.calls[0]!
     expect(String(call[0])).toBe(`${SERVER}/api/me/usage`)
