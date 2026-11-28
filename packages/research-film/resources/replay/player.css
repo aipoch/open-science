@@ -12,9 +12,6 @@ body.preview #root {
 #controls {
   flex: none;
 }
-#controls .dv-scene-button {
-  display: none;
-}
 .dv-report {
   overflow: auto;
 }

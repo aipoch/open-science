@@ -224,6 +224,12 @@ it('builds an offline seekable player with continuous speech, source identity an
       { type: 'open-science-research-video-ready', duration: result.duration },
       '*'
     )
+    const sceneButtons = [
+      ...preview.window.document.querySelectorAll<HTMLButtonElement>('#controls .dv-scene-button')
+    ]
+    expect(sceneButtons.length).toBe(timeline.scenes.length)
+    for (const button of sceneButtons)
+      expect(preview.window.getComputedStyle(button).display).not.toBe('none')
   } finally {
     preview.window.close()
   }
@@ -235,5 +241,96 @@ it('builds an offline seekable player with continuous speech, source identity an
     ).rejects.toThrow('image identity')
   } finally {
     delete source.replay!.events[0].image
+  }
+})
+it('keeps scene navigation buttons visible and seekable in preview mode', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'replay-nav-'))
+  roots.push(root)
+  await mkdir(join(root, 'voice'))
+  const multiSceneSpec = {
+    schemaVersion: 1,
+    title: 'Multi-scene evidence',
+    scenes: [
+      { id: 's1', evidenceIds: ['m1'], narration: 'First scene.' },
+      { id: 's2', evidenceIds: ['m2'], narration: 'Second scene.' }
+    ]
+  }
+  await writeFile(join(root, 'session.json'), JSON.stringify(source))
+  await writeFile(join(root, 'video.json'), JSON.stringify(multiSceneSpec))
+  await writeFile(
+    join(root, 'voice/timings.json'),
+    JSON.stringify({
+      say: { s1_0: 'First scene.', s2_0: 'Second scene.' },
+      lines: { s1_0: 2, s2_0: 2 }
+    })
+  )
+  await writeFile(
+    join(root, 'voice/word-times.json'),
+    JSON.stringify({
+      s1_0: [
+        [0, 0.8],
+        [0.9, 1.8]
+      ],
+      s2_0: [
+        [0, 0.8],
+        [0.9, 1.8]
+      ]
+    })
+  )
+  await writeFile(join(root, 'voice/s1_0.wav'), 'fixture audio')
+  await writeFile(join(root, 'voice/s2_0.wav'), 'fixture audio')
+  await writeFile(join(root, 'mix.wav'), 'fixture audio')
+  const frozen = await freezeReplaySource(
+    join(root, 'video.json'),
+    join(root, 'frozen'),
+    new AbortController().signal
+  )
+  const result = await buildReplayPlayer({
+    specPath: frozen,
+    voiceDirectory: join(root, 'voice'),
+    mixPath: join(root, 'mix.wav'),
+    engineDirectory: researchFilmResources().stageDirectory,
+    outputDirectory: join(root, 'output')
+  })
+  const html = await readFile(result.playerPath, 'utf8')
+  const archive = unzipSync(await readFile(result.sourcePath))
+  const timeline = JSON.parse(Buffer.from(archive['timeline.json']).toString())
+  const preview = new JSDOM(html, {
+    runScripts: 'dangerously',
+    url: 'https://film.invalid/',
+    beforeParse(window) {
+      Object.defineProperty(window.document, 'fonts', { value: { ready: Promise.resolve() } })
+      Object.defineProperty(window.Image.prototype, 'src', {
+        set() {
+          queueMicrotask(() => this.onload?.())
+        }
+      })
+    }
+  })
+  try {
+    const window = preview.window as unknown as Window & {
+      __ready: Promise<unknown>
+      __replayState(): { time: number; sourceId: string; kind: string }
+    }
+    await window.__ready
+    const buttons = [
+      ...window.document.querySelectorAll<HTMLButtonElement>('#controls .dv-scene-button')
+    ]
+    expect(buttons.map((b) => b.textContent)).toEqual(
+      timeline.scenes.map((scene: { id: string }) => scene.id)
+    )
+    for (const button of buttons)
+      expect(window.getComputedStyle(button).display).not.toBe('none')
+    expect(window.__replayState()).toMatchObject({ kind: 'opening' })
+    buttons[2].click()
+    const targetStart = Number(timeline.scenes[2].start)
+    expect(window.__replayState()).toMatchObject({ sourceId: 'm2', kind: 'conversation' })
+    expect(window.__replayState().time).toBeGreaterThanOrEqual(targetStart)
+    const scrubber = window.document.querySelector<HTMLInputElement>('#controls input[type="range"]')
+    expect(Number(scrubber?.value)).toBeGreaterThanOrEqual(targetStart)
+    buttons[1].click()
+    expect(window.__replayState()).toMatchObject({ sourceId: 'm1', kind: 'prompt' })
+  } finally {
+    preview.window.close()
   }
 })
