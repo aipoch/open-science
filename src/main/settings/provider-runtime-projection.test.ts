@@ -229,6 +229,45 @@ describe('ProviderRuntimeProjectionOwner', () => {
     expect(owner.toProviderView({ ...provider, vendorId: 'openai' }).models).toEqual([])
   })
 
+  it('configures full context limits for discovered Anthropic models in OpenCode', () => {
+    const owner = new ProviderRuntimeProjectionOwner()
+    const framework = getAgentFramework('opencode')
+    const model = 'claude-sonnet-4-6'
+    const maxInputTokens = 990_000
+    const maxOutputTokens = 128_000
+    const provider: StoredProvider = {
+      id: 'anthropic',
+      type: 'official',
+      vendorId: 'anthropic',
+      name: 'Anthropic',
+      modelCatalog: {
+        fetchedAt: 1,
+        models: [
+          ...[model, 'claude-opus-4-6', 'claude-opus-4-7'].map((id) => ({
+            id,
+            maxInputTokens,
+            maxOutputTokens
+          })),
+          { id: 'directory-only-model', maxInputTokens }
+        ]
+      }
+    }
+    const target = owner.resolveRuntimeTarget(provider, { kind: 'required', model }, framework)
+    const config = framework.prepareModelConfig(target.provider, {
+      storageRoot: 'profiles',
+      executablePath: 'opencode',
+      providerModelCatalog: owner.resolveRuntimeModelCatalog(provider, framework)
+    })
+    const models = JSON.parse(config.env!.OPENCODE_CONFIG_CONTENT).provider.anthropic.models
+    const limit = { context: 1_000_000, input: maxInputTokens, output: maxOutputTokens }
+    expect(models).toMatchObject({
+      [model]: { limit },
+      'claude-opus-4-6': { limit },
+      'claude-opus-4-7': { limit }
+    })
+    expect(models['directory-only-model']).not.toHaveProperty('limit')
+  })
+
   it('reads a large inventory once while enumerating its runtime targets', () => {
     const models = Array.from({ length: 1000 }, (_, index) => ({ id: 'model-' + index }))
     const readModels = vi.fn(() => models)
