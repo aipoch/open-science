@@ -719,6 +719,7 @@
       "runner": "playwright",
       "paths": [
         "e2e/certification/*.spec.ts",
+        "e2e/notebook-panel-performance.spec.ts",
         "e2e/runtime-performance.spec.ts",
         "e2e/startup-performance.spec.ts",
         "e2e/builtin-web-fetch.spec.ts",

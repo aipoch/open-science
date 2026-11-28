@@ -7,6 +7,8 @@ import {
 import { InlineNotice } from '@/components/ui/inline-notice'
 import { RefreshCw, TriangleAlert, Variable, X } from 'lucide-react'
 import {
+  memo,
+  useMemo,
   useCallback,
   useEffect,
   useEffectEvent,
@@ -16,6 +18,7 @@ import {
   useState,
   type RefObject
 } from 'react'
+import { createStore, useStore, type StoreApi } from 'zustand'
 import { useTranslation } from 'react-i18next'
 
 import { ErrorNotice } from '@/components/error-notice'
@@ -68,6 +71,11 @@ import {
   resolveRunKernelKind
 } from './notebook-cell-utils'
 import { NotebookCodeBlock } from './notebook-code'
+import {
+  NotebookRunList,
+  type NotebookCellDisclosure,
+  type NotebookRunListHandle
+} from './NotebookRunList'
 import { NotebookInputDataStrip } from './NotebookInputDataStrip'
 import { NotebookRunEvidence } from './NotebookRunEvidence'
 import { NotebookRunOutputs } from './NotebookRunOutputs'
@@ -230,7 +238,8 @@ const DependencyStatusBadge = ({
 
 // Displays one durable execution record from run.json in chronological order. The zero-based index
 // is the cell number shown in [n], and a failed run marks the offending line.
-const NotebookRunCell = ({
+const NotebookRunCell = memo(function NotebookRunCell({
+  disclosure,
   run,
   index,
   staleness,
@@ -240,11 +249,12 @@ const NotebookRunCell = ({
 }: {
   run: NotebookRunRecord
   index: number
+  disclosure: NotebookCellDisclosure
   staleness?: NotebookRunStaleness
   causedByRunIndex?: number
   allowFolderAccess?: boolean
   loadRun?: (runId: string) => Promise<NotebookRunEvidenceSnapshot | null | undefined>
-}): React.JSX.Element => {
+}): React.JSX.Element {
   const { t } = useTranslation()
   const isProblem = isProblemRunStatus(run.status)
   const statusLabel = notebookRunStatusLabel(run.status)
@@ -297,11 +307,11 @@ const NotebookRunCell = ({
         language={kind === 'repl' ? 'javascript' : kind}
         highlightLine={errorLine}
       />
-      <NotebookRunOutputs run={run} allowFolderAccess={allowFolderAccess} />
-      <NotebookRunEvidence run={run} loadRun={loadRun} />
+      <NotebookRunOutputs run={run} disclosure={disclosure} allowFolderAccess={allowFolderAccess} />
+      <NotebookRunEvidence run={run} disclosure={disclosure} loadRun={loadRun} />
     </div>
   )
-}
+})
 
 // Mirrors terminal-originated runs in the bottom terminal scrollback.
 const TerminalScrollback = ({
@@ -358,23 +368,23 @@ const variablePrefixAtCaret = (
 
 // Captures one-line terminal code and submits on Enter while Shift+Enter keeps editing.
 const TerminalInput = ({
-  code,
+  draft,
   disabled,
   language,
   variables,
-  onChange,
   onFocusChange,
   onSubmit
 }: {
-  code: string
+  draft: StoreApi<string>
   disabled: boolean
   language: NotebookLanguage
   variables: readonly NotebookNamespaceVariable[]
-  onChange: (value: string) => void
   onFocusChange: (focused: boolean) => void
   onSubmit: () => void
 }): React.JSX.Element => {
   const { t } = useTranslation()
+  const code = useStore(draft)
+  const onChange = draft.setState
   const listboxId = useId()
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const pendingCaretOffset = useRef<number | undefined>(undefined)
@@ -534,7 +544,8 @@ const NotebookPreview = ({ item, isActive = true }: NotebookPreviewProps): React
   const kernelScrollFadeRef = useHorizontalScrollFade<HTMLDivElement>()
   const environmentScrollFadeRef = useHorizontalScrollFade<HTMLDivElement>()
   const [notebookState, setNotebookState] = useState<NotebookSessionState | undefined>()
-  const [terminalCode, setTerminalCode] = useState('')
+  const [terminalDraft] = useState(() => createStore<string>(() => ''))
+  const hasTerminalDraft = useStore(terminalDraft, (draft) => Boolean(draft.trim()))
   const [terminalInputFocused, setTerminalInputFocused] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
   const [submittingTarget, setSubmittingTarget] = useState<string | undefined>()
@@ -555,7 +566,15 @@ const NotebookPreview = ({ item, isActive = true }: NotebookPreviewProps): React
   }>()
   const historyReadInFlight = useRef<string | undefined>(undefined)
   const historyGeneration = useRef(0)
-  const prependSnapshot = useRef<{ scrollTop: number; scrollHeight: number } | undefined>(undefined)
+  const runList = useRef<NotebookRunListHandle>(null)
+  const prependSnapshot = useRef<
+    | {
+        scrollTop: number
+        scrollHeight: number
+        anchor: ReturnType<NotebookRunListHandle['capture']>
+      }
+    | undefined
+  >(undefined)
   const viewSelectionVersion = useRef(0)
   const [showVariables, setShowVariables] = useState(false)
   const [showPrivateVariables, setShowPrivateVariables] = useState(false)
@@ -789,12 +808,27 @@ const NotebookPreview = ({ item, isActive = true }: NotebookPreviewProps): React
     })
   }, [item.notebook.sessionId, loadNotebookState])
 
-  const recentRuns = notebookState?.runs ?? notebookState?.recentRuns ?? []
-  const runs = [
-    ...new Map([...(history?.runs ?? []), ...recentRuns].map((run) => [run.runId, run])).values()
-  ].sort((a, b) => a.startedAt - b.startedAt || a.runId.localeCompare(b.runId))
+  const runs = useMemo(
+    () =>
+      [
+        ...new Map(
+          [
+            ...(history?.runs ?? []),
+            ...(notebookState?.runs ?? notebookState?.recentRuns ?? [])
+          ].map((run) => [run.runId, run])
+        ).values()
+      ].sort((a, b) => a.startedAt - b.startedAt || a.runId.localeCompare(b.runId)),
+    [history?.runs, notebookState]
+  )
   const notebookSession = session ?? { id: item.notebook.sessionId }
-  const frameRuns = normalizeNotebookRootFrameRuns(runs, notebookSession)
+  const frameRuns = useMemo(
+    () =>
+      normalizeNotebookRootFrameRuns(runs, {
+        id: item.notebook.sessionId,
+        conversationGraph: session?.conversationGraph
+      }),
+    [runs, item.notebook.sessionId, session?.conversationGraph]
+  )
   const agentSummaries = notebookAgentSummariesForSession(
     notebookSession,
     runs,
@@ -811,9 +845,11 @@ const NotebookPreview = ({ item, isActive = true }: NotebookPreviewProps): React
   const effectiveFrameFilter = frameOptions.some((option) => option.value === frameFilter)
     ? frameFilter
     : frameOptions[0]?.value
-  const projectedRuns = effectiveFrameFilter
-    ? projectNotebookRunsForFrame(frameRuns, effectiveFrameFilter)
-    : []
+  const projectedRuns = useMemo(
+    () =>
+      effectiveFrameFilter ? projectNotebookRunsForFrame(frameRuns, effectiveFrameFilter) : [],
+    [frameRuns, effectiveFrameFilter]
+  )
   const agentHistory = agentSummaries.find(
     (agent) => `frame:${agent.agentFrameId}` === effectiveFrameFilter
   )
@@ -839,7 +875,10 @@ const NotebookPreview = ({ item, isActive = true }: NotebookPreviewProps): React
   const effectiveActiveKind = visibleKinds.includes(activeKind)
     ? activeKind
     : (visibleKinds[0] ?? 'python')
-  const kindRuns = projectedRuns.filter((run) => resolveRunKernelKind(run) === effectiveActiveKind)
+  const kindRuns = useMemo(
+    () => projectedRuns.filter((run) => resolveRunKernelKind(run) === effectiveActiveKind),
+    [projectedRuns, effectiveActiveKind]
+  )
   const activeRuntimeBinding =
     effectiveActiveKind === 'python' || effectiveActiveKind === 'r'
       ? notebookState?.runtimeBindings?.[effectiveActiveKind]
@@ -912,15 +951,23 @@ const NotebookPreview = ({ item, isActive = true }: NotebookPreviewProps): React
         executionEnvironment ??
         envNames[0])
     : undefined
-  const visibleRuns = activeDataLanguage
-    ? kindRuns.filter((run) => resolveRunEnvironment(run) === effectiveActiveEnv)
-    : kindRuns
+  const visibleRuns = useMemo(
+    () =>
+      activeDataLanguage
+        ? kindRuns.filter((run) => resolveRunEnvironment(run) === effectiveActiveEnv)
+        : kindRuns,
+    [kindRuns, activeDataLanguage, effectiveActiveEnv]
+  )
   const focusedRun = item.notebookRunId
     ? frameRuns.find((run) => run.runId === item.notebookRunId)
     : undefined
 
+  const cellsFollowing = useRef(!focusedRun)
   const cellsViewportRef = useFollowScrollBottom(followEnabled && !history?.loading, {
     resetKey: focusedRun && JSON.stringify([focusedRun.runId, item.notebookRunFocusRequest ?? 0]),
+    onFollowingChange: (following) => {
+      cellsFollowing.current = following
+    },
     followOnReset: !focusedRun
   })
 
@@ -959,6 +1006,7 @@ const NotebookPreview = ({ item, isActive = true }: NotebookPreviewProps): React
         const viewport = cellsViewportRef.current
         if (target.cursor && viewport)
           prependSnapshot.current = {
+            anchor: runList.current?.capture(),
             scrollTop: viewport.scrollTop,
             scrollHeight: viewport.scrollHeight
           }
@@ -1036,7 +1084,9 @@ const NotebookPreview = ({ item, isActive = true }: NotebookPreviewProps): React
   useLayoutEffect(() => {
     const viewport = cellsViewportRef.current
     if (!viewport || !prependSnapshot.current) return
-    viewport.scrollTop = prependAnchoredScrollTop(prependSnapshot.current, viewport.scrollHeight)
+    const snapshot = prependSnapshot.current
+    if (!snapshot.anchor || !runList.current?.restore(snapshot.anchor))
+      viewport.scrollTop = prependAnchoredScrollTop(snapshot, viewport.scrollHeight)
     prependSnapshot.current = undefined
   }, [cellsViewportRef, history?.runs])
 
@@ -1059,15 +1109,12 @@ const NotebookPreview = ({ item, isActive = true }: NotebookPreviewProps): React
     if (!item.notebookRunId || !visibleRuns.some((run) => run.runId === item.notebookRunId)) return
     const requestKey = `${item.notebookRunId}:${item.notebookRunFocusRequest ?? 0}`
     if (lastFocusedRunRequest.current === requestKey) return
-    const target = [
-      ...(cellsViewportRef.current?.querySelectorAll<HTMLElement>('[data-run-id]') ?? [])
-    ].find((candidate) => candidate.dataset.runId === item.notebookRunId)
-    if (target && typeof target.scrollIntoView === 'function') {
-      lastFocusedRunRequest.current = requestKey
-      target.scrollIntoView({ block: 'center' })
-    }
+    if (runList.current?.reveal(item.notebookRunId)) lastFocusedRunRequest.current = requestKey
   }, [cellsViewportRef, item.notebookRunFocusRequest, item.notebookRunId, visibleRuns])
-  const visibleRunIndexById = new Map(visibleRuns.map((run, index) => [run.runId, index]))
+  const visibleRunIndexById = useMemo(
+    () => new Map(visibleRuns.map((run, index) => [run.runId, index])),
+    [visibleRuns]
+  )
   const visibleStalenessForRun = (run: NotebookRunRecord): NotebookRunStaleness | undefined => {
     const staleness = notebookState?.runStaleness?.[run.runId]
     if (staleness?.state !== 'stale') return staleness
@@ -1331,7 +1378,7 @@ const NotebookPreview = ({ item, isActive = true }: NotebookPreviewProps): React
   // Sends terminal code through the same notebook interpreter and history path as agent code.
   const submitTerminalCode = async (): Promise<void> => {
     const epoch = getDesktopRuntimeEpoch()
-    const draft = terminalCode
+    const draft = terminalDraft.getState()
     const code = draft.trim()
 
     if (!code || !activeDataLanguage || !activeEnvName || isHistoricalEnvironmentView) {
@@ -1362,7 +1409,7 @@ const NotebookPreview = ({ item, isActive = true }: NotebookPreviewProps): React
         await loadNotebookState()
         return
       }
-      setTerminalCode((current) => (current === draft ? '' : current))
+      terminalDraft.setState((current) => (current === draft ? '' : current))
 
       // Manual commands produce root-lane history. Reveal the result only if this view still owns
       // the submission; failed admission and later navigation retain their original context.
@@ -1388,7 +1435,7 @@ const NotebookPreview = ({ item, isActive = true }: NotebookPreviewProps): React
     latestTerminalSubmit.current = submitTerminalCode
   })
   const terminalRetryId = `${terminalRetryOwner}:${selectedTarget}:${recoveryEpoch}`
-  const terminalRetryEnabled = !isTerminalLocked && Boolean(terminalCode.trim())
+  const terminalRetryEnabled = !isTerminalLocked && hasTerminalDraft
   useEffect(() => {
     if (
       !isActive ||
@@ -1468,38 +1515,50 @@ const NotebookPreview = ({ item, isActive = true }: NotebookPreviewProps): React
   const notebookCells = (
     <div
       ref={cellsViewportRef}
-      className="h-full min-h-0 overflow-y-auto overscroll-contain"
+      className="h-full min-h-0 overflow-y-auto overscroll-contain [overflow-anchor:none]"
       data-testid="notebook-cells"
+      data-notebook-viewport=""
     >
-      <div className="divide-y divide-border-100">
-        {historyPage?.hasEarlierRuns && historyPage.oldestCursor ? (
-          <button
-            type="button"
-            className="w-full px-3 py-2 text-xs text-text-300 hover:bg-bg-200"
-            disabled={history?.loading}
-            onClick={() => void loadHistory({ cursor: historyPage.oldestCursor })}
-          >
-            {history?.loading ? t('Loading earlier runs…') : t('Load earlier runs')}
-          </button>
-        ) : null}
-        {history?.error ? (
-          <ErrorNotice
-            inline
-            description={history.error}
-            primaryButton={{
-              label: t('Retry'),
-              onClick: () =>
-                void loadHistory(
-                  requestedRunId ? { runId: requestedRunId } : { cursor: historyPage?.oldestCursor }
-                )
-            }}
-          />
-        ) : null}
-        {visibleRuns.map((run, index) => {
-          const staleness = visibleStalenessForRun(run)
-          return (
-            <div key={run.runId} data-run-id={run.runId}>
+      <div className="relative">
+        <div>
+          {historyPage?.hasEarlierRuns && historyPage.oldestCursor ? (
+            <button
+              type="button"
+              className="w-full px-3 py-2 text-xs text-text-300 hover:bg-bg-200"
+              disabled={history?.loading}
+              onClick={() => void loadHistory({ cursor: historyPage.oldestCursor })}
+            >
+              {history?.loading ? t('Loading earlier runs…') : t('Load earlier runs')}
+            </button>
+          ) : null}
+          {history?.error ? (
+            <ErrorNotice
+              inline
+              description={history.error}
+              primaryButton={{
+                label: t('Retry'),
+                onClick: () =>
+                  void loadHistory(
+                    requestedRunId
+                      ? { runId: requestedRunId }
+                      : { cursor: historyPage?.oldestCursor }
+                  )
+              }}
+            />
+          ) : null}
+        </div>
+        <NotebookRunList
+          key={historyScope}
+          ref={runList}
+          active={isActive}
+          followOnMount={followEnabled && !focusedRun ? cellsFollowing : undefined}
+          runs={visibleRuns}
+          viewportRef={cellsViewportRef}
+          renderRun={(run, index, disclosure) => {
+            const staleness = visibleStalenessForRun(run)
+            return (
               <NotebookRunCell
+                disclosure={disclosure}
                 run={run}
                 allowFolderAccess={Boolean(
                   session && session.contentLoaded !== false && !session.packageOrigin
@@ -1513,9 +1572,9 @@ const NotebookPreview = ({ item, isActive = true }: NotebookPreviewProps): React
                     : undefined
                 }
               />
-            </div>
-          )
-        })}
+            )
+          }}
+        />
         {visiblePendingCode.map(({ activity, code }) => (
           <div key={activity.id} data-testid="notebook-pending-code">
             <div role="status" className="px-3 py-2 text-xs text-text-300">
@@ -1730,11 +1789,10 @@ const NotebookPreview = ({ item, isActive = true }: NotebookPreviewProps): React
               viewportRef={terminalViewportRef}
             />
             <TerminalInput
-              code={terminalCode}
+              draft={terminalDraft}
               disabled={isTerminalLocked}
               language={activeDataLanguage}
               variables={suggestionVariables}
-              onChange={setTerminalCode}
               onFocusChange={setTerminalInputFocused}
               onSubmit={() => {
                 void submitTerminalCode()

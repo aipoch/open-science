@@ -23,6 +23,7 @@ import { getJobHarvestDir } from '../compute/workspace-path'
 import { createNodeSecureStorageCipher } from '../credential-identity/node-cipher'
 import { configureSecureStorageCipher } from '../secure-storage'
 import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
+import { healthyNotebookMemoryPolicy } from '../notebook/memory-policy.test-support'
 import { NotebookRunRepository } from '../notebook/repository'
 import { NotebookIdleReclamation, NOTEBOOK_SESSION_IDLE_MS } from '../notebook/idle-reclamation'
 import type { NotebookRuntimeService } from '../notebook/runtime-service'
@@ -152,6 +153,15 @@ async function dashboard(sharedRoot: string): Promise<{
   }
 }
 
+// Idle retirement removes the kernel immediately and reaps its process tree asynchronously.
+async function expectProcessExit(pid: number): Promise<void> {
+  expect(pid).toBeGreaterThan(0)
+  await vi.waitFor(
+    () => expect(() => process.kill(pid, 0)).toThrow(expect.objectContaining({ code: 'ESRCH' })),
+    { timeout: 5_000 }
+  )
+}
+
 async function notebookComposition(
   root: string,
   jobs: ComputeJobRepository
@@ -278,6 +288,8 @@ it.each([
       })
       composition = await notebookComposition(root, jobs)
       const { notebook, archive } = composition
+      // Exercise expiry and capacity independently of the test machine's memory pressure.
+      vi.spyOn(notebook, 'getMemoryPolicy').mockResolvedValue(healthyNotebookMemoryPolicy())
       const sweep = async (): Promise<void> => {
         const before = check.mock.calls.length
         notebook.noteSessionActivity('unrelated-session')
@@ -376,11 +388,10 @@ it.each([
         expect(notebook.getProjectActivity(scope).kernels).toHaveLength(2)
         now++
         await sweep()
-        // Before this fix only the ordinary session reaches terminated here.
         const kernels = notebook.getProjectActivity(scope).kernels
         expect(kernels.some((kernel) => kernel.sessionId === 'ordinary')).toBe(false)
         expect(kernels).toHaveLength(0)
-        expect(() => process.kill(Number(ordinary.stdout.trim()), 0)).toThrow()
+        await expectProcessExit(Number(ordinary.stdout.trim()))
       } else {
         now++
         expect((await execute('capacity-2', 'console.log(2)')).status).toBe('completed')
@@ -392,7 +403,7 @@ it.each([
         expect(kernels.some((kernel) => kernel.sessionId === scope.sessionId)).toBe(false)
         expect(() => process.kill(Number(ordinary.stdout.trim()), 0)).not.toThrow()
       }
-      expect(() => process.kill(pid, 0)).toThrow()
+      await expectProcessExit(pid)
       expect((await jobs.get(jobId))?.status).toBe(stage)
 
       ray.start()
@@ -495,7 +506,7 @@ it.each([
         await sweep()
         now += NOTEBOOK_SESSION_IDLE_MS
         await sweep()
-        expect(() => process.kill(livePid, 0)).toThrow()
+        await expectProcessExit(livePid)
         expect((await execute(scope.sessionId, 'console.log(42)')).stdout.trim()).toBe('42')
         expect((await jobs.get(jobId))?.status).toBe('running')
       }

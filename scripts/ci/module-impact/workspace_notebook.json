@@ -10,6 +10,7 @@
     "src/renderer/src/pages/workspace/NotebookRunEvidence.render.test.tsx",
     "src/renderer/src/pages/workspace/NotebookRunEvidence.tsx",
     "src/renderer/src/pages/workspace/NotebookRecordCell.tsx",
+    "src/renderer/src/pages/workspace/NotebookRunList.tsx",
     "src/renderer/src/pages/workspace/NotebookRunOutputs.render.test.tsx",
     "src/renderer/src/pages/workspace/NotebookRunOutputs.tsx",
     "src/renderer/src/pages/workspace/NotebookToolFigureOutputs.tsx",

@@ -2,6 +2,7 @@ import { serializedSourcePath } from './serialized-file-provenance'
 import { notebookWriteOption, notebookWriteDisposition } from './notebook-write-semantics'
 import {
   PYTHON_LIBRARY_EFFECTS,
+  reachablePythonLibrarySummaries,
   acceptsPythonCallbackContainer,
   pythonLibraryMethodEffect,
   pythonArgumentShapeReturnType,
@@ -4102,7 +4103,7 @@ class Analyzer extends NodeVisitor {
         const returnType = this.libraryCallEffect(item.context_expr)?.returnType
         this.prepareAssignment([contextTarget.id])
         if (returnType && PYTHON_LIBRARY_EFFECTS[returnType]) {
-          this.addLibrarySummaries()
+          this.addLibrarySummaries(returnType)
           this.localLibraryTypes.set(contextTarget.id, returnType)
         }
       }
@@ -4610,7 +4611,7 @@ class Analyzer extends NodeVisitor {
       const typeName = types[index]
       if (!typeName || sources[index] || primarySource) continue
       sources[index] = name
-      this.addLibrarySummaries()
+      this.addLibrarySummaries(typeName)
       this.typeBindings.push({ target: name, typeName, argumentNames: [] })
       if (typeName !== 'python.scalar')
         for (const source of aliases) this.addPossibleAlias(name, source)
@@ -4921,9 +4922,11 @@ class Analyzer extends NodeVisitor {
     }
   }
 
-  addLibrarySummaries(): void {
+  // Later Cells can call methods on these bindings and on their results. Persist
+  // that complete set of types once per Cell, including cyclic return types.
+  addLibrarySummaries(...roots: string[]): void {
     const existing = new Set(this.typeSummaries.map((summary) => summary.name))
-    for (const [name, summary] of Object.entries(PYTHON_LIBRARY_EFFECTS)) {
+    for (const [name, summary] of reachablePythonLibrarySummaries(roots)) {
       if (existing.has(name)) continue
       const methods = Object.entries(summary.methods).map(([methodName, effect]) => ({
         name: methodName,
@@ -4951,7 +4954,7 @@ class Analyzer extends NodeVisitor {
     }
     const summary = PYTHON_LIBRARY_EFFECTS[module]
     if (!summary || summary.kind !== 'module') return
-    this.addLibrarySummaries()
+    this.addLibrarySummaries(module)
     this.importedModules.set(target, module)
     if (target !== module) this.aliases.set(target, module)
     this.typeBindings.push({ target, typeName: module, argumentNames: [] })
@@ -4964,7 +4967,7 @@ class Analyzer extends NodeVisitor {
     }
     const effect = PYTHON_LIBRARY_EFFECTS[module]?.methods[member]
     if (!effect) return
-    this.addLibrarySummaries()
+    this.addLibrarySummaries(module)
     const callableType = `python-callable:${module}.${member}`
     const method = {
       name: '__call__',
@@ -5791,7 +5794,7 @@ class Analyzer extends NodeVisitor {
     if (target?.type === 'Name' && target.id && literalBinding && this.controlDepth === 0)
       this.literalBindings.set(target.id, literalBinding)
     if (literalParts?.every(Boolean)) {
-      this.addLibrarySummaries()
+      this.addLibrarySummaries(...literalParts.filter((part) => part !== undefined))
       for (const [index, name] of targetNames.entries()) {
         const typeName = literalParts[index]!
         this.localLibraryTypes.set(name, typeName)
@@ -5816,7 +5819,7 @@ class Analyzer extends NodeVisitor {
       this.contextualStaticCollections.add(target.id)
     }
     if (target?.type === 'Name' && target.id && preservedIterationType) {
-      this.addLibrarySummaries()
+      this.addLibrarySummaries(preservedIterationType)
       this.localLibraryTypes.set(target.id, preservedIterationType)
     } else if (
       target?.type === 'Name' &&
@@ -5824,7 +5827,7 @@ class Analyzer extends NodeVisitor {
       returnType &&
       PYTHON_LIBRARY_EFFECTS[returnType]
     ) {
-      this.addLibrarySummaries()
+      this.addLibrarySummaries(returnType)
       this.localLibraryTypes.set(target.id, returnType)
       if (['python.container', 'python.strings', 'python.numbers'].includes(returnType))
         this.builtinContainers.add(target.id)
@@ -5835,7 +5838,7 @@ class Analyzer extends NodeVisitor {
       )
         this.typeBindings.push({ target: target.id, typeName: returnType, argumentNames: [] })
     } else if (destructuredReturnTypes?.length) {
-      this.addLibrarySummaries()
+      this.addLibrarySummaries(...destructuredReturnTypes)
       for (const [index, targetName] of targetNames.entries()) {
         const typeName = pythonUnpackedReturnType(
           destructuredReturnTypes,
@@ -5851,7 +5854,7 @@ class Analyzer extends NodeVisitor {
         }
       }
     } else if (unpackedTypes.length) {
-      this.addLibrarySummaries()
+      this.addLibrarySummaries(...unpackedTypes)
       for (const [index, targetName] of targetNames.entries()) {
         const typeName =
           unpackedTypes[index] ?? (unpackedTypes.length === 1 ? unpackedTypes[0] : '')
@@ -5860,7 +5863,7 @@ class Analyzer extends NodeVisitor {
         }
       }
     } else if (target?.type === 'Name' && target.id && subscriptType) {
-      this.addLibrarySummaries()
+      this.addLibrarySummaries(subscriptType)
       this.localLibraryTypes.set(target.id, subscriptType)
     }
     if (target?.type === 'Name' && target.id && lambdaSummary) {
@@ -8315,7 +8318,7 @@ const analyzePythonTree = (
     )
       continue
     if (kind === 'object' && PYTHON_LIBRARY_EFFECTS[qualifiedName]?.kind === 'type') {
-      analyzer.addLibrarySummaries()
+      analyzer.addLibrarySummaries(qualifiedName)
       analyzer.localLibraryTypes.set(name, qualifiedName)
     } else if (kind === 'import') {
       analyzer.importedCanonicalNames.set(name, qualifiedName)

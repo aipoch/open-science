@@ -36,10 +36,11 @@ import {
 import { managedEnvironmentIsReadOnly } from './managed-path-context'
 import { analyzeReplNotebookSource } from './dependency-analysis-repl'
 import { analyzeRFileAccesses, analyzeRNotebookSource } from './dependency-analysis-r'
-import { projectNotebookFileContext, type FileContextEntry } from './dependency-file-context'
+import { createNotebookFileContextProjection } from './dependency-file-context'
 import { normalizeNotebookSourceFileAccess } from './source-file-access-analysis'
 import {
   serializedFileContext,
+  serializedFileContextBeforeRun,
   serializedValueDescriptors,
   type ReadFileGenerations
 } from './serialized-file-provenance'
@@ -1658,25 +1659,46 @@ const sqliteCwdBoundaryUnknown = (before?: string, after?: string): boolean =>
 const pythonSourceMayChangeWorkingDirectory = (source: string): boolean =>
   /\b(?:chdir|fchdir)\b|(?:^|\n)\s*%cd(?:\s|$)/u.test(source)
 
-const projectSourceFileAccessContext = (
-  runs: readonly NotebookRunRecord[],
+const helperContextKey = (module: { source: string; exports: readonly string[] }): string =>
+  JSON.stringify([module.source, [...module.exports].sort()])
+const helperEvidenceKey = (module: {
+  helperId: string
+  sourceDigest: string
+  exports: readonly string[]
+  interfaceRevision: string
+  registeredGeneration: string
+}): string =>
+  JSON.stringify([
+    module.helperId,
+    module.sourceDigest,
+    [...module.exports].sort(),
+    module.interfaceRevision,
+    module.registeredGeneration
+  ])
+
+type SourceContextScope = Pick<
+  NotebookSourceFileAccessContextRequest,
+  'language' | 'environment' | 'kernelEpochId'
+>
+
+type SourceFileAccessProjection = {
+  append(run: NotebookRunRecord): void
+  contextFor(current?: NotebookRunRecord): NotebookSourceFileAccessContext | undefined
+}
+
+const createSourceFileAccessProjection = (
   sidecar: NotebookDependencyAnalysisSidecar,
-  request: Pick<
-    NotebookSourceFileAccessContextRequest,
-    'currentRunId' | 'language' | 'environment' | 'kernelEpochId'
-  >
-): NotebookSourceFileAccessContext | undefined => {
-  const entries: Array<FileContextEntry | undefined> = []
+  request: SourceContextScope
+): SourceFileAccessProjection => {
+  const projection = createNotebookFileContextProjection(request.language)
   let previousRun: NotebookRunRecord | undefined
-  for (const run of runs) {
-    if (run.runId === request.currentRunId) break
-    if (!isSourceFileAccessContextRun(run, request)) continue
-    if (run.status !== 'completed' && run.kernelDispatched === false) continue
+  const append = (run: NotebookRunRecord): void => {
+    if (run.status !== 'completed' && run.kernelDispatched === false) return
     const cached = sidecar.runs[run.runId]
     const fileContext = cachedAnalysisIsReusable(cached, checksumFor(run))
       ? cached?.fileContext
       : undefined
-    entries.push(
+    projection.append(
       fileContext && cached
         ? {
             // Code before an exception may already have modified a module. The
@@ -1707,23 +1729,42 @@ const projectSourceFileAccessContext = (
     )
     previousRun = run
   }
-  const current = runs.find((run) => run.runId === request.currentRunId)
-  const context = projectNotebookFileContext(request.language, entries, {
-    // A live preexecution request has no current history envelope. Do not infer
-    // its cwd from the preceding run or persist a new cwd origin in the cache.
-    sqliteRelativePathBarrier:
-      request.language === 'python' &&
-      (!current ||
-        !isSourceFileAccessContextRun(current, request) ||
-        sqliteCwdBoundaryUnknown(previousRun?.cwdAfter, current.cwdBefore) ||
-        (current !== undefined && pythonSourceMayChangeWorkingDirectory(current.script)))
-  })
-  return current?.cwdBefore
-    ? {
-        ...(context ?? { staticStrings: [], staticCollections: [], localFileWrappers: [] }),
-        workingDirectory: current.cwdBefore
-      }
-    : context
+  const contextFor = (current?: NotebookRunRecord): NotebookSourceFileAccessContext | undefined => {
+    const context = projection.snapshot({
+      // A live preexecution request has no current history envelope. Do not infer
+      // its cwd from the preceding run or persist a new cwd origin in the cache.
+      sqliteRelativePathBarrier:
+        request.language === 'python' &&
+        (!current ||
+          !isSourceFileAccessContextRun(current, request) ||
+          sqliteCwdBoundaryUnknown(previousRun?.cwdAfter, current.cwdBefore) ||
+          (current !== undefined && pythonSourceMayChangeWorkingDirectory(current.script)))
+    })
+    return current?.cwdBefore
+      ? {
+          ...(context ?? { staticStrings: [], staticCollections: [], localFileWrappers: [] }),
+          workingDirectory: current.cwdBefore
+        }
+      : context
+  }
+
+  return { append, contextFor }
+}
+
+const projectSourceFileAccessContext = (
+  runs: readonly NotebookRunRecord[],
+  sidecar: NotebookDependencyAnalysisSidecar,
+  request: Pick<
+    NotebookSourceFileAccessContextRequest,
+    'currentRunId' | 'language' | 'environment' | 'kernelEpochId'
+  >
+): NotebookSourceFileAccessContext | undefined => {
+  const projection = createSourceFileAccessProjection(sidecar, request)
+  for (const run of runs) {
+    if (run.runId === request.currentRunId) return projection.contextFor(run)
+    if (isSourceFileAccessContextRun(run, request)) projection.append(run)
+  }
+  return projection.contextFor()
 }
 
 const externalInterpreterKey = (run: NotebookRunRecord): string =>
@@ -2200,73 +2241,80 @@ class NotebookDependencyAnalyzer {
             pending.map((run) => run.script)
           )
         : undefined
-    for (const [index, run] of pending.entries()) {
-      let priorContext = run.kernelEpochId
-        ? projectSourceFileAccessContext(sessionRuns, sidecar, {
-            currentRunId: run.runId,
+    // Both exact and interpreter batches preserve session order. Consume each prior record
+    // after its facts are available, keeping independent binding state for each kernel scope.
+    const scopeKey = (run: NotebookRunRecord): string =>
+      JSON.stringify([run.environment ?? '', run.kernelEpochId])
+    const projections = new Map<string, SourceFileAccessProjection>()
+    for (const run of pending) {
+      if (!run.kernelEpochId) continue
+      const key = scopeKey(run)
+      if (!projections.has(key))
+        projections.set(
+          key,
+          createSourceFileAccessProjection(sidecar, {
             language,
             environment: run.environment,
             kernelEpochId: run.kernelEpochId
           })
+        )
+    }
+    const priorHelpers = new Map<string, Set<string>>()
+    const serializedWriters: NotebookRunRecord[] = []
+    let cursor = 0
+    for (const [index, run] of pending.entries()) {
+      while (cursor < sessionRuns.length && sessionRuns[cursor]!.runId !== run.runId) {
+        const previous = sessionRuns[cursor++]!
+        if (previous.kernelKind === language && previous.kernelEpochId)
+          projections.get(scopeKey(previous))?.append(previous)
+        if (
+          language === 'python' &&
+          previous.kernelKind === language &&
+          previous.helperModules?.length &&
+          (previous.status === 'completed' || previous.kernelDispatched !== false)
+        ) {
+          const key = scopeKey(previous)
+          const seen = priorHelpers.get(key) ?? new Set<string>()
+          const cached = sidecar.runs[previous.runId]
+          for (const module of previous.helperModules) {
+            // A failed dispatch can leave sticky metadata. Allow a retry if the analyzed
+            // source proves that the same binding survived the failure.
+            if (
+              previous.status !== 'completed' &&
+              cachedAnalysisIsReusable(cached, checksumFor(previous)) &&
+              cached?.facts.state === 'available' &&
+              cached.fileContext?.pythonHelperModules?.some(
+                (candidate) => helperContextKey(candidate) === helperContextKey(module)
+              )
+            )
+              continue
+            seen.add(helperEvidenceKey(module))
+          }
+          priorHelpers.set(key, seen)
+        }
+        // File provenance can cross kernels. Keep only potential writers and verify their
+        // checksum and file generations with the same reader used for live execution.
+        if (
+          previous.fileEvidence?.state === 'available' &&
+          sidecar.runs[previous.runId]?.facts.serializedValueWrites?.length
+        )
+          serializedWriters.push(previous)
+      }
+      let priorContext = run.kernelEpochId
+        ? projections.get(scopeKey(run))?.contextFor(run)
         : undefined
-      if (language === 'r' || language === 'python')
-        priorContext = await serializedFileContext(
+      if (serializedWriters.length && (language === 'r' || language === 'python'))
+        priorContext = await serializedFileContextBeforeRun(
           this.options.readFileGenerations ?? (async () => []),
-          sessionRuns,
+          serializedWriters,
           (previous) =>
             cachedAnalysisIsReusable(sidecar.runs[previous.runId], checksumFor(previous))
               ? sidecar.runs[previous.runId]?.facts
               : undefined,
-          run.runId,
+          run,
           priorContext,
           this.options.executionRelativeRoot
         )
-      const helperContextKey = (module: { source: string; exports: readonly string[] }): string =>
-        JSON.stringify([module.source, [...module.exports].sort()])
-      const helperEvidenceKey = (module: {
-        helperId: string
-        sourceDigest: string
-        exports: readonly string[]
-        interfaceRevision: string
-        registeredGeneration: string
-      }): string =>
-        JSON.stringify([
-          module.helperId,
-          module.sourceDigest,
-          [...module.exports].sort(),
-          module.interfaceRevision,
-          module.registeredGeneration
-        ])
-      const priorRunIndex = sessionRuns.findIndex((candidate) => candidate.runId === run.runId)
-      const priorHelperEvidence = new Set(
-        sessionRuns
-          .slice(0, priorRunIndex < 0 ? sessionRuns.length : priorRunIndex)
-          .filter(
-            (previous) =>
-              previous.kernelKind === language &&
-              (previous.environment ?? '') === (run.environment ?? '') &&
-              previous.kernelEpochId === run.kernelEpochId &&
-              (previous.status === 'completed' || previous.kernelDispatched !== false)
-          )
-          .flatMap((previous) => {
-            const cached = sidecar.runs[previous.runId]
-            return (previous.helperModules ?? [])
-              .filter((module) => {
-                if (previous.status === 'completed') return true
-                // Sticky metadata does not prove a fresh load after a dispatched failure.
-                // Retry only bindings whose analyzed source remained available and unmodified.
-                const retained = cached?.fileContext?.pythonHelperModules ?? []
-                return !(
-                  cachedAnalysisIsReusable(cached, checksumFor(previous)) &&
-                  cached?.facts.state === 'available' &&
-                  retained.some(
-                    (candidate) => helperContextKey(candidate) === helperContextKey(module)
-                  )
-                )
-              })
-              .map(helperEvidenceKey)
-          })
-      )
       let helperEvidenceIncomplete =
         run.helperEvidenceStatus?.state === 'incomplete' ||
         !helperReplayWithinBudget(run.helperModules ?? [])
@@ -2276,13 +2324,14 @@ class NotebookDependencyAnalyzer {
       const projectedHelperKeys = new Set(projectedHelperModules.map(helperContextKey))
       const currentHelperModules =
         language === 'python' && !helperEvidenceIncomplete ? (run.helperModules ?? []) : []
+      const priorHelperEvidence = priorHelpers.get(scopeKey(run))
       const helperModules = [
         ...projectedHelperModules,
         ...currentHelperModules
           .filter(
             (module) =>
               projectedHelperKeys.has(helperContextKey(module)) ||
-              !priorHelperEvidence.has(helperEvidenceKey(module))
+              !priorHelperEvidence?.has(helperEvidenceKey(module))
           )
           .map(({ source, exports }) => ({ source, exports: [...exports] }))
       ].filter(
@@ -2426,7 +2475,13 @@ class NotebookDependencyAnalyzer {
         return emptySidecar()
       }
       const runs: NotebookDependencyAnalysisSidecar['runs'] = {}
-      for (const [runId, value] of Object.entries(candidate.runs)) {
+      // Revision is part of every Run checksum. Older facts cannot be reused;
+      // keep finalized epoch snapshots, and validate revisionless v1 files as before.
+      const persistedRuns =
+        candidate.analyzerRevision && candidate.analyzerRevision !== ANALYZER_REVISION
+          ? {}
+          : candidate.runs
+      for (const [runId, value] of Object.entries(persistedRuns)) {
         if (!value || typeof value !== 'object') return emptySidecar()
         const record = value as Record<string, unknown>
         if (typeof record.checksum !== 'string') return emptySidecar()

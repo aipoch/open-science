@@ -1,3 +1,4 @@
+import type { NotebookCellDisclosure } from './NotebookRunList'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { NotebookRunRecord, NotebookRunEvidenceSnapshot } from '../../../../shared/notebook'
@@ -5,15 +6,17 @@ import type { NotebookRunRecord, NotebookRunEvidenceSnapshot } from '../../../..
 // Show only evidence saved with this Run. Never substitute today's interpreter or package inventory.
 export const NotebookRunEvidence = ({
   run,
+  disclosure,
   showEnvironmentCaptureWarning = true,
   loadRun
 }: {
   run: NotebookRunRecord
+  disclosure?: NotebookCellDisclosure
   showEnvironmentCaptureWarning?: boolean
   loadRun?: (runId: string) => Promise<NotebookRunEvidenceSnapshot | null | undefined>
 }): React.JSX.Element => {
   const { t } = useTranslation()
-  const [isOpen, setIsOpen] = useState(false)
+  const [isOpen, setIsOpen] = useState(disclosure?.get('evidence') ?? false)
   const [evidenceRun, setEvidenceRun] = useState<
     NotebookRunEvidenceSnapshot & Pick<NotebookRunRecord, 'frozenRuntimeTarget' | 'helperModules'>
   >()
@@ -50,9 +53,11 @@ export const NotebookRunEvidence = ({
   }
   return (
     <details
+      open={isOpen}
       className="mt-2 text-xs text-text-300"
       data-testid="notebook-run-evidence"
       onToggle={(event) => {
+        disclosure?.set('evidence', event.currentTarget.open)
         setIsOpen(event.currentTarget.open)
         if (event.currentTarget.open) void loadEvidence()
       }}

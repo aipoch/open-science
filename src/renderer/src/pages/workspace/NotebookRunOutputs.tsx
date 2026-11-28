@@ -1,3 +1,4 @@
+import type { NotebookCellDisclosure } from './NotebookRunList'
 import type { ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useSettingsStore } from '@/stores/settings-store'
@@ -261,7 +262,13 @@ const LegacyTextOutput = ({ run }: { run: NotebookRunRecord }): React.JSX.Elemen
   )
 }
 
-const NotebookRunTextOutputs = ({ run }: { run: NotebookRunRecord }): React.JSX.Element | null => {
+const NotebookRunTextOutputs = ({
+  run,
+  disclosure
+}: {
+  run: NotebookRunRecord
+  disclosure?: NotebookCellDisclosure
+}): React.JSX.Element | null => {
   let rendered: React.JSX.Element[]
   const errorClassName = run.status === 'failed' ? 'text-danger-000' : 'text-text-200'
 
@@ -279,13 +286,26 @@ const NotebookRunTextOutputs = ({ run }: { run: NotebookRunRecord }): React.JSX.
 
   if (rendered.length === 0) return null
 
-  return <NotebookTextOutput>{rendered}</NotebookTextOutput>
+  return <NotebookTextOutput disclosure={disclosure}>{rendered}</NotebookTextOutput>
 }
 
-export const NotebookTextOutput = ({ children }: { children: ReactNode }): React.JSX.Element => {
+export const NotebookTextOutput = ({
+  children,
+  disclosure
+}: {
+  children: ReactNode
+  disclosure?: NotebookCellDisclosure
+}): React.JSX.Element => {
   const { t } = useTranslation()
   return (
-    <details open className="group mt-2" data-testid="notebook-text-output">
+    <details
+      open={disclosure?.get('output') ?? true}
+      onToggle={(event) => {
+        disclosure?.set('output', event.currentTarget.open)
+      }}
+      className="group mt-2"
+      data-testid="notebook-text-output"
+    >
       <summary className="flex cursor-pointer list-none items-center gap-1.5 py-1 text-xs text-text-300">
         <span aria-hidden="true" className="transition-transform group-open:rotate-90">
           ▸
@@ -378,10 +398,12 @@ const NotebookNetworkRecoveryNotice = (): React.JSX.Element => {
 // Composes the two independent output surfaces used by the notebook panel and session dialog.
 const NotebookRunOutputs = ({
   run,
+  disclosure,
   allowFolderAccess = false
 }: {
   run: NotebookRunRecord
   allowFolderAccess?: boolean
+  disclosure?: NotebookCellDisclosure
 }): React.JSX.Element | null => {
   const { t } = useTranslation()
   const networkRecovery = requiresNotebookNetworkRecovery(run)
@@ -430,7 +452,7 @@ const NotebookRunOutputs = ({
           {notice}
         </p>
       ) : null}
-      <NotebookRunTextOutputs run={run} />
+      <NotebookRunTextOutputs run={run} disclosure={disclosure} />
       <NotebookRunFigureOutputs run={run} />
       {run.truncated ? (
         <p className="mt-2 text-xs text-text-300" data-testid="notebook-output-truncated">

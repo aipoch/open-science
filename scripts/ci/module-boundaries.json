@@ -8741,6 +8741,7 @@
         "src/renderer/src/pages/workspace/NotebookPreview.tsx",
         "src/renderer/src/pages/workspace/NotebookRunEvidence.tsx",
         "src/renderer/src/pages/workspace/NotebookRecordCell.tsx",
+        "src/renderer/src/pages/workspace/NotebookRunList.tsx",
         "src/renderer/src/pages/workspace/NotebookRunOutputs.tsx",
         "src/renderer/src/pages/workspace/NotebookToolFigureOutputs.tsx",
         "src/renderer/src/pages/workspace/ProjectComputeInbox.tsx",
@@ -8760,6 +8761,7 @@
         "src/renderer/src/pages/workspace/NotebookPreview.tsx": "presentation-adapter",
         "src/renderer/src/pages/workspace/NotebookRunEvidence.tsx": "presentation-adapter",
         "src/renderer/src/pages/workspace/NotebookRecordCell.tsx": "presentation-adapter",
+        "src/renderer/src/pages/workspace/NotebookRunList.tsx": "presentation-adapter",
         "src/renderer/src/pages/workspace/NotebookRunOutputs.tsx": "presentation-adapter",
         "src/renderer/src/pages/workspace/NotebookToolFigureOutputs.tsx": "presentation-adapter",
         "src/renderer/src/pages/workspace/ProjectComputeInbox.tsx": "presentation-adapter",
@@ -8790,9 +8792,11 @@
       ],
       "externalImports": [
         "@aipoch/reproducibility/execution-context",
+        "@tanstack/react-virtual",
         "lucide-react",
         "radix-ui",
         "react",
+        "react-dom",
         "react-i18next"
       ]
     },

@@ -146,6 +146,7 @@
     "@prisma/client": "^6.19.3",
     "@radix-ui/react-focus-scope": "^1.1.11",
     "@rc-component/qrcode": "^2.0.0",
+    "@tanstack/react-virtual": "3.14.28",
     "@xmldom/xmldom": "0.8.15",
     "ajv": "^8.20.0",
     "diff": "9.0.0",

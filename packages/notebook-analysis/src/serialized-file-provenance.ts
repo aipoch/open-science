@@ -46,13 +46,31 @@ export const serializedFileContext = async (
   context?: NotebookSourceFileAccessContext,
   executionRelativeRoot = '.'
 ): Promise<NotebookSourceFileAccessContext | undefined> => {
+  const index = runs.findIndex((run) => run.runId === currentRunId)
+  return serializedFileContextBeforeRun(
+    readGenerations,
+    index < 0 ? runs : runs.slice(0, index),
+    factsFor,
+    runs[index],
+    context,
+    executionRelativeRoot
+  )
+}
+
+export const serializedFileContextBeforeRun = async (
+  readGenerations: ReadFileGenerations,
+  preceding: readonly NotebookRunRecord[],
+  factsFor: (run: NotebookRunRecord) => NotebookRunDependencyFacts | undefined,
+  current: NotebookRunRecord | undefined,
+  context?: NotebookSourceFileAccessContext,
+  executionRelativeRoot = '.'
+): Promise<NotebookSourceFileAccessContext | undefined> => {
   const files: NonNullable<NotebookSourceFileAccessContext['serializedValueFiles']> = []
   const budget = { remaining: 8 * 1024 * 1024 }
-  const currentIndex = runs.findIndex((run) => run.runId === currentRunId)
-  const preceding = currentIndex < 0 ? runs : runs.slice(0, currentIndex)
   let inspected = 0
   // The source proof belongs to a file generation, not a kernel namespace. It can bridge epochs.
-  for (const run of [...preceding].reverse()) {
+  for (let index = preceding.length - 1; index >= 0; index--) {
+    const run = preceding[index]!
     if (
       !['r', 'python'].includes(run.kernelKind) ||
       run.status !== 'completed' ||
@@ -87,7 +105,6 @@ export const serializedFileContext = async (
     if (files.length > 128) files.length = 128
   }
   if (!files.length) return context
-  const current = runs.find((run) => run.runId === currentRunId)
   const initial = current
     ? (await readGenerations(current, { remaining: 1024 * 1024 })).filter(
         (g) => g.relation === 'present-before'

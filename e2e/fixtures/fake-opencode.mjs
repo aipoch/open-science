@@ -3228,6 +3228,23 @@ if (process.argv.includes('--version')) {
               return 'Compute running stop feedback received.'
             }
           )
+        } else if (prompt.includes('Warm the Notebook benchmark kernel.')) {
+          await withMcpClient(context.params.sessionId, 'open-science-notebook', async (client) => {
+            const call = async (name, args = {}) =>
+              toolResult(name, await client.callTool({ name, arguments: args }))
+            const { runtimes } = await call('list_notebook_runtimes')
+            const runtime = runtimes.find(
+              (row) => row.language === 'python' && row.source === 'external' && row.runnable
+            )
+            if (!runtime) throw new Error('Benchmark Python is unavailable.')
+            await call('notebook_bind_runtime', {
+              language: 'python',
+              runtimeId: runtime.runtimeId
+            })
+            const run = await call('notebook_execute', { language: 'python', code: 'print(42)' })
+            if (run.status !== 'completed') throw new Error('Benchmark kernel did not start.')
+          })
+          reply = 'Notebook benchmark kernel ready.'
         } else if (prompt.includes('Start Compute monitor kernels.')) {
           reply = await verifyComputeMonitor(context.params.sessionId)
         } else if (prompt.includes('Read Compute stop feedback.')) {

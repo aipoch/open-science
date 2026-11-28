@@ -55,11 +55,16 @@ const negativeRSearchPathSummary = (
 
 // The owner checks history/epoch/cache validity. This projection owns only binding lifetimes;
 // an unavailable entry discards prior knowledge, and later completed runs can establish it again.
-const projectNotebookFileContext = (
-  language: 'python' | 'r' | 'repl',
-  entries: Iterable<FileContextEntry | undefined>,
-  options: { sqliteRelativePathBarrier?: boolean } = {}
-): NotebookSourceFileAccessContext | undefined => {
+type FileContextProjection = {
+  append(entry: FileContextEntry | undefined): void
+  snapshot(options: {
+    sqliteRelativePathBarrier?: boolean
+  }): NotebookSourceFileAccessContext | undefined
+}
+
+const createNotebookFileContextProjection = (
+  language: 'python' | 'r' | 'repl'
+): FileContextProjection => {
   const staticStrings = new Map<string, string>()
   const staticCollections = new Map<
     string,
@@ -111,7 +116,7 @@ const projectNotebookFileContext = (
     }
   }
   let available = true
-  for (const entry of entries) {
+  const append = (entry: FileContextEntry | undefined): void => {
     if (
       language === 'repl' &&
       (!entry ||
@@ -147,7 +152,7 @@ const projectNotebookFileContext = (
         replContainerNames.delete(name)
         resolvedKernelNames.delete(name)
       }
-      continue
+      return
     }
     for (const namespace of entry?.fileContext.pythonTaintedNamespaces ?? [])
       pythonTaintedNamespaces.add(namespace)
@@ -269,7 +274,7 @@ const projectNotebookFileContext = (
       boundPythonState()
       aliases.clear()
       available = false
-      continue
+      return
     }
     available = true
     const { facts, fileContext } = entry
@@ -578,75 +583,94 @@ const projectNotebookFileContext = (
     }
     boundPythonState()
   }
-  if (language === 'python' && options.sqliteRelativePathBarrier)
-    for (const [name, binding] of pythonBindings)
-      if (
-        isSqliteBinding(binding) &&
-        binding.filePath !== undefined &&
-        isRelativeSqlitePath(binding.filePath)
-      )
-        pythonBindings.set(name, withoutFilePath(binding))
-  if (
-    !available &&
-    !uncertainKernelNames.size &&
-    !pythonTaintedNamespaces.size &&
-    !replNamespaceUncertain &&
-    !rSearchPathUncertain &&
-    !pythonMayHaveWritableMappings
-  )
-    return undefined
-  const specializedNames = new Set([
-    ...staticStrings.keys(),
-    ...staticCollections.keys(),
-    ...localFileWrappers.keys()
-  ])
-  const remainingKernelNames = [...new Set([...resolvedKernelNames, ...uncertainKernelNames])]
-    .filter((name) => !specializedNames.has(name))
-    .sort()
-  const staticCollectionAliases: NonNullable<
-    NotebookSourceFileAccessContext['staticCollectionAliases']
-  > = []
-  for (const group of new Set(aliases.values())) {
-    const source = [...group].find((name) => staticCollections.has(name))
-    if (!source) continue
-    for (const target of group) {
-      if (target !== source) staticCollectionAliases.push({ target, source })
+  const snapshot = (options: {
+    sqliteRelativePathBarrier?: boolean
+  }): NotebookSourceFileAccessContext | undefined => {
+    if (
+      !available &&
+      !uncertainKernelNames.size &&
+      !pythonTaintedNamespaces.size &&
+      !replNamespaceUncertain &&
+      !rSearchPathUncertain &&
+      !pythonMayHaveWritableMappings
+    )
+      return undefined
+    const specializedNames = new Set([
+      ...staticStrings.keys(),
+      ...staticCollections.keys(),
+      ...localFileWrappers.keys()
+    ])
+    const remainingKernelNames = [...new Set([...resolvedKernelNames, ...uncertainKernelNames])]
+      .filter((name) => !specializedNames.has(name))
+      .sort()
+    const staticCollectionAliases: NonNullable<
+      NotebookSourceFileAccessContext['staticCollectionAliases']
+    > = []
+    for (const group of new Set(aliases.values())) {
+      const source = [...group].find((name) => staticCollections.has(name))
+      if (!source) continue
+      for (const target of group) {
+        if (target !== source) staticCollectionAliases.push({ target, source })
+      }
+    }
+    return {
+      staticStrings: [...staticStrings]
+        .map(([name, value]) => ({ name, value }))
+        .sort((left, right) => left.name.localeCompare(right.name)),
+      staticCollections: [...staticCollections.values()].sort((left, right) =>
+        left.name.localeCompare(right.name)
+      ),
+      localFileWrappers: [...localFileWrappers.values()].sort((left, right) =>
+        left.name.localeCompare(right.name)
+      ),
+      ...(language === 'repl'
+        ? { replContainerNames: [...replContainerNames], replNamespaceUncertain }
+        : {}),
+      ...(rAtomicValueNames.size ? { rAtomicValueNames: [...rAtomicValueNames].sort() } : {}),
+      ...(rAtomicTableNames.size ? { rAtomicTableNames: [...rAtomicTableNames].sort() } : {}),
+      ...(rCopyOnModifyNames.size ? { rCopyOnModifyNames: [...rCopyOnModifyNames].sort() } : {}),
+      ...(remainingKernelNames.length ? { resolvedKernelNames: remainingKernelNames } : {}),
+      ...(rSearchPathUncertain ? { rSearchPathUncertain: true as const } : {}),
+      ...(pythonTaintedNamespaces.size
+        ? { pythonTaintedNamespaces: [...pythonTaintedNamespaces].sort() }
+        : {}),
+      ...(pythonMayHaveWritableMappings ? { pythonMayHaveWritableMappings: true as const } : {}),
+      ...(pythonBindings.size
+        ? {
+            pythonBindings: [...pythonBindings.values()]
+              .map((binding) =>
+                language === 'python' &&
+                options.sqliteRelativePathBarrier &&
+                isSqliteBinding(binding) &&
+                binding.filePath !== undefined &&
+                isRelativeSqlitePath(binding.filePath)
+                  ? withoutFilePath(binding)
+                  : binding
+              )
+              .sort((a, b) => a.name.localeCompare(b.name))
+          }
+        : {}),
+      ...(rFunctions.size
+        ? { rFunctions: [...rFunctions].map(([name, summary]) => ({ name, summary })) }
+        : {}),
+      ...(staticCollectionAliases.length ? { staticCollectionAliases } : {}),
+      ...(pythonHelperModules.size
+        ? { pythonHelperModules: [...pythonHelperModules.values()] }
+        : {})
     }
   }
-  return {
-    staticStrings: [...staticStrings]
-      .map(([name, value]) => ({ name, value }))
-      .sort((left, right) => left.name.localeCompare(right.name)),
-    staticCollections: [...staticCollections.values()].sort((left, right) =>
-      left.name.localeCompare(right.name)
-    ),
-    localFileWrappers: [...localFileWrappers.values()].sort((left, right) =>
-      left.name.localeCompare(right.name)
-    ),
-    ...(language === 'repl'
-      ? { replContainerNames: [...replContainerNames], replNamespaceUncertain }
-      : {}),
-    ...(rAtomicValueNames.size ? { rAtomicValueNames: [...rAtomicValueNames].sort() } : {}),
-    ...(rAtomicTableNames.size ? { rAtomicTableNames: [...rAtomicTableNames].sort() } : {}),
-    ...(rCopyOnModifyNames.size ? { rCopyOnModifyNames: [...rCopyOnModifyNames].sort() } : {}),
-    ...(remainingKernelNames.length ? { resolvedKernelNames: remainingKernelNames } : {}),
-    ...(rSearchPathUncertain ? { rSearchPathUncertain: true as const } : {}),
-    ...(pythonTaintedNamespaces.size
-      ? { pythonTaintedNamespaces: [...pythonTaintedNamespaces].sort() }
-      : {}),
-    ...(pythonMayHaveWritableMappings ? { pythonMayHaveWritableMappings: true as const } : {}),
-    ...(pythonBindings.size
-      ? {
-          pythonBindings: [...pythonBindings.values()].sort((a, b) => a.name.localeCompare(b.name))
-        }
-      : {}),
-    ...(rFunctions.size
-      ? { rFunctions: [...rFunctions].map(([name, summary]) => ({ name, summary })) }
-      : {}),
-    ...(staticCollectionAliases.length ? { staticCollectionAliases } : {}),
-    ...(pythonHelperModules.size ? { pythonHelperModules: [...pythonHelperModules.values()] } : {})
-  }
+  return { append, snapshot }
 }
 
-export { projectNotebookFileContext }
+const projectNotebookFileContext = (
+  language: 'python' | 'r' | 'repl',
+  entries: Iterable<FileContextEntry | undefined>,
+  options: { sqliteRelativePathBarrier?: boolean } = {}
+): NotebookSourceFileAccessContext | undefined => {
+  const projection = createNotebookFileContextProjection(language)
+  for (const entry of entries) projection.append(entry)
+  return projection.snapshot(options)
+}
+
+export { createNotebookFileContextProjection, projectNotebookFileContext }
 export type { FileContextEntry }
