@@ -17,6 +17,7 @@ import {
 } from '@/lib/session-package-capabilities'
 import { packageOperationActive, usePackageOperationStore } from '@/stores/package-operation-store'
 import { UseCaseIntroductionLoader } from './use-case-introduction-loader'
+import { UseCaseVideo, VideoPlayIndicator } from './UseCaseVideo'
 import { UseCaseCover } from './UseCaseCover'
 import { useSettingsStore } from '@/stores/settings-store'
 import { OrgCaseDetailsDialog } from './OrgCaseDetailsDialog'
@@ -486,6 +487,15 @@ export const UseCaseCarousel = ({
     )
   }
 
+  const [previewSlug, setPreviewSlug] = useState<string>()
+  const activateCard = (item: UseCase): void => {
+    introductions.schedulePrefetch(item)
+    setPreviewSlug(item.video ? item.slug : undefined)
+  }
+  const deactivateCard = (item: UseCase): void => {
+    introductions.cancelPrefetch()
+    setPreviewSlug((current) => (current === item.slug ? undefined : current))
+  }
   const renderCards = (cases: UseCase[]): React.JSX.Element[] =>
     cases.map((item) => {
       return (
@@ -493,11 +503,11 @@ export const UseCaseCarousel = ({
           key={item.slug}
           data-case-slug={item.slug}
           aria-label={item.title}
-          onMouseEnter={() => introductions.schedulePrefetch(item)}
-          onMouseLeave={() => introductions.cancelPrefetch()}
-          onFocusCapture={() => introductions.schedulePrefetch(item)}
+          onMouseEnter={() => activateCard(item)}
+          onMouseLeave={() => deactivateCard(item)}
+          onFocusCapture={() => activateCard(item)}
           onBlurCapture={(event) => {
-            if (!event.currentTarget.contains(event.relatedTarget)) introductions.cancelPrefetch()
+            if (!event.currentTarget.contains(event.relatedTarget)) deactivateCard(item)
           }}
           className="group relative min-w-0 overflow-hidden rounded-xl border border-border bg-bg-000 transition-[box-shadow,border-color] duration-300 ease-out hover:border-primary/25 hover:shadow-card-opaque focus-within:border-primary/40 focus-within:shadow-card-opaque motion-reduce:transition-none"
         >
@@ -514,6 +524,14 @@ export const UseCaseCarousel = ({
             <div className="absolute inset-0 transition-transform duration-300 ease-out group-hover:scale-[1.025] group-focus-within:scale-[1.025] motion-reduce:transform-none motion-reduce:transition-none">
               <UseCaseCover key={item.imageUrl} src={item.imageUrl} />
             </div>
+            {item.video && (
+              <>
+                <VideoPlayIndicator />
+                {active && !browser && previewSlug === item.slug && (
+                  <UseCaseVideo key={item.video.id} video={item.video} title={item.title} preview />
+                )}
+              </>
+            )}
             {renderDownloadStatus(item)}
           </div>
           {/* Keep padding outside the clamped text so a third line cannot bleed into it. */}
@@ -663,6 +681,7 @@ export const UseCaseCarousel = ({
           {showOfficialDetailsPage && browser && selected && (
             <UseCaseDetailsPage
               item={selected}
+              videoActive={active}
               introductions={introductions}
               onBack={() => {
                 const opener = browser.opener
@@ -765,6 +784,7 @@ export const UseCaseCarousel = ({
       {!inlineDetails && source === 'official' && browser && selected && (
         <UseCaseDetailsDialog
           item={selected}
+          videoActive={active}
           introductions={introductions}
           opener={browser.opener}
           onClose={() => setBrowser(null)}

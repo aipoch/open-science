@@ -11,6 +11,7 @@
     "src/renderer/src/pages/home/UseCaseCarousel.tsx",
     "src/renderer/src/pages/home/UseCaseCarousel.test.tsx",
     "src/renderer/src/pages/home/UseCaseCover.tsx",
+    "src/renderer/src/pages/home/UseCaseVideo.tsx",
     "src/renderer/src/pages/home/use-case-gallery-store.ts",
     "src/renderer/src/pages/home/use-case-cover-cache.ts",
     "src/renderer/src/pages/home/UseCaseDetailsContent.tsx",

@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest'
-import { parseUseCases } from './use-cases'
+import { parseUseCases, useCaseCatalogContract } from './use-cases'
 
 const item = {
   name: 'gold-vs-bitcoin',
@@ -48,4 +48,33 @@ it('preserves published categories and introduction assets for in-app browsing',
       'https://statics.aipoch.com/open-science/usecases/gold-vs-bitcoin/Research%20intro.md'
   })
   expect(() => parseUseCases([{ ...item, introduction: { file_name: '../private.md' } }])).toThrow()
+})
+
+it('carries optional YouTube metadata through the catalog contract', () => {
+  const id = 'OThnK2w5mMg'
+  for (const path of [
+    'https://www.youtube.com/watch?v=' + id,
+    'https://youtu.be/' + id + '?t=12',
+    'https://m.youtube.com/shorts/' + id,
+    'https://youtube.com/embed/' + id
+  ]) {
+    const cases = parseUseCases([
+      { ...item, video: { type: 'youtube', file_path: path, file_name: 'Film' } }
+    ])
+    expect(useCaseCatalogContract.result.parse(cases)[0].video).toEqual({ id, title: 'Film' })
+  }
+  for (const video of [
+    null,
+    'invalid',
+    { type: 'other', file_path: 'https://youtu.be/' + id },
+    ...[
+      'not a URL',
+      'http://youtu.be/' + id,
+      'https://other.example/' + id,
+      'https://user@youtu.be/' + id,
+      'https://youtu.be/short'
+    ].map((file_path) => ({ type: 'youtube', file_path }))
+  ]) {
+    expect(parseUseCases([{ ...item, video }])[0]).not.toHaveProperty('video')
+  }
 })

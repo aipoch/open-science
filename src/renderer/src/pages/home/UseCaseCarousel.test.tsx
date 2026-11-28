@@ -779,3 +779,53 @@ it('shows the specific download failure reason from operation.error or preflight
     )
   ).toBeTruthy()
 })
+
+it('keeps desktop video previews inert and hands playback to the detail guest', async () => {
+  vi.stubGlobal('api', {
+    ...window.api,
+    getRuntimeVersions: () => ({ electron: '43' }),
+    sessions: {
+      ...window.api.sessions,
+      useCaseCatalog: async () =>
+        parseUseCases([
+          {
+            ...items[0],
+            name: 'video-case',
+            video: {
+              type: 'youtube',
+              file_path: 'https://youtu.be/OThnK2w5mMg'
+            }
+          }
+        ])
+    }
+  })
+  await render()
+  const card = within(container).getByRole('article')
+  const open = within(card).getByRole('button', { name: 'Case 1' })
+  await act(async () => fireEvent.mouseOver(card))
+  const preview = card.querySelector('webview')!
+  expect(preview.getAttribute('httpreferrer')).toBe('https://com.aipoch.open-science/')
+  expect(preview.getAttribute('src')).toContain('controls=0')
+  expect(preview.parentElement?.classList.contains('opacity-0')).toBe(true)
+  await act(async () => fireEvent(preview, new Event('media-started-playing')))
+  expect(preview.parentElement?.hasAttribute('inert')).toBe(true)
+  expect(preview.parentElement?.classList.contains('opacity-100')).toBe(true)
+  await act(async () => fireEvent.click(open))
+  expect(preview.isConnected).toBe(false)
+  const detail = within(document.body).getByRole('dialog').querySelector('webview')!
+  expect(detail.getAttribute('src')).not.toContain('controls=0')
+  await act(async () => fireEvent(detail, new Event('media-started-playing')))
+  expect(detail.getAttribute('tabindex')).toBe('0')
+  expect(detail.parentElement?.hasAttribute('inert')).toBe(false)
+  await act(async () =>
+    fireEvent(
+      detail,
+      Object.assign(new Event('did-fail-load'), {
+        isMainFrame: true,
+        errorCode: -106
+      })
+    )
+  )
+  expect(detail.isConnected).toBe(false)
+  expect(within(document.body).getByRole('dialog').querySelector('img')).toBeTruthy()
+})
