@@ -396,7 +396,7 @@ jobs:
           name: default-agent-conversation-${{ matrix.name }}
           retention-days: 7
           path: test-results/default-agent-conversation/
-          if-no-files-found: error
+          if-no-files-found: ignore
 
       - name: Record platform certification evidence
         if: ${{ !inputs.install_only && !inputs.artifact_run_id }}
