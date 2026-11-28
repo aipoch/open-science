@@ -238,7 +238,7 @@ test('restores the blocked conversation across restart and resumes after reautho
   }
 })
 
-test('shows the local denial when an existing conversation switches to an untrusted HTTP provider @pr-mainline-conversation', async ({
+test('shows the local denial when an existing conversation switches to an untrusted HTTP provider', async ({
   app
 }) => {
   const host = nonLoopbackHost()
