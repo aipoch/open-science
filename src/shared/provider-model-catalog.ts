@@ -23,6 +23,13 @@ import { resolveReasoningEffortProfile } from './reasoning-effort'
 
 export const KILO_FREE_MODEL_ID = 'kilo-auto/free'
 
+// The Anthropic Models API reports input and output caps separately from the full context window.
+const ANTHROPIC_DISCOVERED_CONTEXT_WINDOWS = new Map([
+  ['claude-sonnet-4-6', 1_000_000],
+  ['claude-opus-4-6', 1_000_000],
+  ['claude-opus-4-7', 1_000_000]
+])
+
 export type OfficialCatalogSource = {
   vendorId?: OfficialVendorId
   hasKey?: boolean
@@ -157,6 +164,10 @@ export function resolveOfficialModelCatalog(source: OfficialCatalogSource): Cata
         if (base) routes[endpoint] = base
       }
       const cached = live.get(id)
+      const discoveredContextWindow =
+        vendorId === 'anthropic' && !bundled && cached?.contextWindow === undefined
+          ? ANTHROPIC_DISCOVERED_CONTEXT_WINDOWS.get(id)
+          : undefined
       return {
         id,
         ...(bundled
@@ -165,6 +176,9 @@ export function resolveOfficialModelCatalog(source: OfficialCatalogSource): Cata
         supportsImageInput: isVendorModelMultimodal(vendorId, id),
         reasoningEffort: getVendorModelReasoningCapability(vendorId, id),
         ...cached,
+        ...(discoveredContextWindow === undefined
+          ? {}
+          : { contextWindow: discoveredContextWindow }),
         routes: resolveSnapshotRoutes(cached?.routes, routes, discoveryOrigin)
       }
     })
