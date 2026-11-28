@@ -933,6 +933,36 @@ const removeFirst = (values: string[], item: string): string[] => {
   return index === -1 ? values : [...values.slice(0, index), ...values.slice(index + 1)]
 }
 
+const R_UNARY_MATH_CALLS = new Set([
+  'log1p',
+  'expm1',
+  'sqrt',
+  'abs',
+  'sin',
+  'cos',
+  'floor',
+  'ceiling',
+  'exp',
+  'log2',
+  'log10',
+  'sign',
+  'trunc',
+  'tan',
+  'atan',
+  'asin',
+  'acos',
+  'sinh',
+  'cosh',
+  'tanh',
+  'atanh',
+  'asinh',
+  'acosh',
+  'gamma',
+  'lgamma',
+  'digamma',
+  'trigamma'
+])
+
 const analyzeRSource = (
   root: Node,
   contextualFileWrappers: readonly NotebookFileCallEffectSummary[] = [],
@@ -4155,38 +4185,7 @@ const analyzeRSource = (
     if (name === 'lengths') return primitiveGroupCardinality(expr)
     if (name === '.subset' || name === '.subset2') return primitiveVectorExtraction(expr)
     if (name === 'match') return primitiveValueMatching(expr)
-    if (
-      [
-        'log1p',
-        'expm1',
-        'sqrt',
-        'abs',
-        'sin',
-        'cos',
-        'floor',
-        'ceiling',
-        'exp',
-        'log2',
-        'log10',
-        'sign',
-        'trunc',
-        'tan',
-        'atan',
-        'asin',
-        'acos',
-        'sinh',
-        'cosh',
-        'tanh',
-        'atanh',
-        'asinh',
-        'acosh',
-        'gamma',
-        'lgamma',
-        'digamma',
-        'trigamma'
-      ].includes(name ?? '')
-    )
-      return primitiveUnaryMathTransform(expr)
+    if (name && R_UNARY_MATH_CALLS.has(name)) return primitiveUnaryMathTransform(expr)
     if (name === 'atan2') return primitiveBearingTransform(expr)
     if (name === 'beta' || name === 'lbeta') return primitiveBetaNormalizer(expr)
     if (name === 'besselJ' || name === 'besselY') return primitiveCylindricalWave(expr)
@@ -4423,40 +4422,7 @@ const analyzeRSource = (
   }
   const primitiveUnaryMathTransform = (expr: RExpr): boolean => {
     const name = calledName(expr)
-    if (
-      !isCall(expr) ||
-      !name ||
-      ![
-        'log1p',
-        'expm1',
-        'sqrt',
-        'abs',
-        'sin',
-        'cos',
-        'floor',
-        'ceiling',
-        'exp',
-        'log2',
-        'log10',
-        'sign',
-        'trunc',
-        'tan',
-        'atan',
-        'asin',
-        'acos',
-        'sinh',
-        'cosh',
-        'tanh',
-        'atanh',
-        'asinh',
-        'acosh',
-        'gamma',
-        'lgamma',
-        'digamma',
-        'trigamma'
-      ].includes(name) ||
-      !intactBaseCall(expr, name)
-    )
+    if (!isCall(expr) || !name || !R_UNARY_MATH_CALLS.has(name) || !intactBaseCall(expr, name))
       return false
     const args = primitiveArguments(expr, ['x'])
     // These Math primitives dispatch only on explicit class objects. Classless
@@ -6722,35 +6688,7 @@ const analyzeRSource = (
     if (resultName === '.subset' || resultName === '.subset2')
       return primitiveVectorExtraction(expr) ? [] : null
     if (resultName === 'match') return primitiveValueMatching(expr) ? [] : null
-    if (
-      resultName === 'log1p' ||
-      resultName === 'expm1' ||
-      resultName === 'sqrt' ||
-      resultName === 'abs' ||
-      resultName === 'sin' ||
-      resultName === 'cos' ||
-      resultName === 'floor' ||
-      resultName === 'ceiling' ||
-      resultName === 'exp' ||
-      resultName === 'log2' ||
-      resultName === 'log10' ||
-      resultName === 'sign' ||
-      resultName === 'trunc' ||
-      resultName === 'tan' ||
-      resultName === 'atan' ||
-      resultName === 'asin' ||
-      resultName === 'acos' ||
-      resultName === 'sinh' ||
-      resultName === 'cosh' ||
-      resultName === 'tanh' ||
-      resultName === 'atanh' ||
-      resultName === 'asinh' ||
-      resultName === 'acosh' ||
-      resultName === 'gamma' ||
-      resultName === 'lgamma' ||
-      resultName === 'digamma' ||
-      resultName === 'trigamma'
-    )
+    if (resultName && R_UNARY_MATH_CALLS.has(resultName))
       return primitiveUnaryMathTransform(expr) ? [] : null
     if (resultName === 'atan2') return primitiveBearingTransform(expr) ? [] : null
     if (resultName === 'beta' || resultName === 'lbeta')
@@ -8353,6 +8291,55 @@ const analyzeRSource = (
     themeIndependentConstructors.add(base)
     return true
   }
+  const baseCallReadOnlyChecks = new Map<string, (call: RExpr) => boolean>([
+    ['is.unsorted', primitiveOrderingInspection],
+    ['sort.list', primitiveSortList],
+    ['inverse.rle', primitiveRunDecoding],
+    ['lengths', primitiveGroupCardinality],
+    ['.subset', primitiveVectorExtraction],
+    ['.subset2', primitiveVectorExtraction],
+    ['match', primitiveValueMatching],
+    ['seq.int', primitiveScanSequence],
+    ...Array.from(nativeRepetitionCalls, (name) => [name, primitiveNativeRepetition] as const),
+    ['matrix', primitiveMatrixConstruction],
+    ['max.col', primitiveDeterministicMaxColumn],
+    ['findInterval', primitiveEventAnchors],
+    ['tabulate', primitiveSpeciesCounts],
+    ['.bincode', primitiveExposureBins],
+    ['append', primitiveSegmentInsertion],
+    ['%%', primitiveRemainder],
+    ['round', primitiveRounding],
+    ['signif', primitiveRounding],
+    ['log', primitiveLogarithm],
+    ['logb', primitiveLogarithm],
+    ['atan2', primitiveBearingTransform],
+    ['beta', primitiveBetaNormalizer],
+    ['lbeta', primitiveBetaNormalizer],
+    ['besselJ', primitiveCylindricalWave],
+    ['besselY', primitiveCylindricalWave],
+    ['psigamma', primitivePolygamma],
+    ['besselI', primitiveScaledBessel],
+    ['besselK', primitiveScaledBessel],
+    ['zapsmall', primitiveResidualCleanup],
+    ...Array.from(
+      fastMatrixReductionCalls,
+      (name) => [name, primitiveFastMatrixReduction] as const
+    ),
+    ['norm', primitiveMatrixNorm],
+    ['crossprod', primitiveMatrixCrossProduct],
+    ['tcrossprod', primitiveMatrixCrossProduct],
+    ['polyroot', primitivePolynomialRoots],
+    ['choose', primitiveCombination],
+    ['lchoose', primitiveCombination],
+    ['factorial', primitiveFactorialNormalizer],
+    ['lfactorial', primitiveFactorialNormalizer],
+    ['Mod', primitiveComplexProjection],
+    ['Arg', primitiveComplexProjection],
+    ['Conj', primitiveComplexProjection],
+    ['Re', primitiveComplexProjection],
+    ['Im', primitiveComplexProjection],
+    ...Array.from(R_UNARY_MATH_CALLS, (name) => [name, primitiveUnaryMathTransform] as const)
+  ])
   let freshPlot = false
   const walk = (expr: RExpr | null | undefined, assignmentTarget = false): void => {
     if (!expr) return
@@ -8733,77 +8720,9 @@ const analyzeRSource = (
       if (!readOnly) invalidateSerializedValues()
       return
     }
+    const checkReadOnly = robustStatistic && baseCallReadOnlyChecks.get(robustStatistic)
     if (
-      (robustStatistic === 'log1p' ||
-        robustStatistic === 'expm1' ||
-        robustStatistic === 'sqrt' ||
-        robustStatistic === 'abs' ||
-        robustStatistic === 'sin' ||
-        robustStatistic === 'cos' ||
-        robustStatistic === 'floor' ||
-        robustStatistic === 'ceiling' ||
-        robustStatistic === 'exp' ||
-        robustStatistic === 'log2' ||
-        robustStatistic === 'log10' ||
-        robustStatistic === 'sign' ||
-        robustStatistic === 'trunc' ||
-        robustStatistic === 'tan' ||
-        robustStatistic === 'atan' ||
-        robustStatistic === 'asin' ||
-        robustStatistic === 'acos' ||
-        robustStatistic === 'sinh' ||
-        robustStatistic === 'cosh' ||
-        robustStatistic === 'tanh' ||
-        robustStatistic === 'atanh' ||
-        robustStatistic === 'asinh' ||
-        robustStatistic === 'acosh' ||
-        robustStatistic === 'atan2' ||
-        robustStatistic === 'gamma' ||
-        robustStatistic === 'lgamma' ||
-        robustStatistic === 'digamma' ||
-        robustStatistic === 'trigamma' ||
-        robustStatistic === 'beta' ||
-        robustStatistic === 'lbeta' ||
-        robustStatistic === 'besselJ' ||
-        robustStatistic === 'besselY' ||
-        robustStatistic === 'psigamma' ||
-        robustStatistic === 'besselI' ||
-        robustStatistic === 'besselK' ||
-        robustStatistic === 'zapsmall' ||
-        robustStatistic === 'polyroot' ||
-        robustStatistic === 'append' ||
-        robustStatistic === '.bincode' ||
-        robustStatistic === 'tabulate' ||
-        robustStatistic === 'findInterval' ||
-        robustStatistic === 'matrix' ||
-        robustStatistic === 'max.col' ||
-        (robustStatistic && nativeRepetitionCalls.has(robustStatistic)) ||
-        robustStatistic === 'seq.int' ||
-        robustStatistic === 'sort.list' ||
-        robustStatistic === 'is.unsorted' ||
-        robustStatistic === 'inverse.rle' ||
-        robustStatistic === 'lengths' ||
-        robustStatistic === '.subset' ||
-        robustStatistic === '.subset2' ||
-        robustStatistic === 'match' ||
-        (robustStatistic && fastMatrixReductionCalls.has(robustStatistic)) ||
-        robustStatistic === 'norm' ||
-        robustStatistic === 'crossprod' ||
-        robustStatistic === 'tcrossprod' ||
-        robustStatistic === '%%' ||
-        robustStatistic === 'choose' ||
-        robustStatistic === 'lchoose' ||
-        robustStatistic === 'factorial' ||
-        robustStatistic === 'lfactorial' ||
-        robustStatistic === 'Mod' ||
-        robustStatistic === 'Arg' ||
-        robustStatistic === 'Conj' ||
-        robustStatistic === 'Re' ||
-        robustStatistic === 'Im' ||
-        robustStatistic === 'log' ||
-        robustStatistic === 'logb' ||
-        robustStatistic === 'round' ||
-        robustStatistic === 'signif') &&
+      checkReadOnly &&
       (!qualified || qualified.package === 'base') &&
       !expr.staticBuiltinShadowed &&
       (!!qualified || intactBaseCall(expr, robustStatistic))
@@ -8811,86 +8730,7 @@ const analyzeRSource = (
       const dependency = qualified ? `${qualified.package}::${robustStatistic}` : robustStatistic
       used.push(dependency)
       if (!defined.includes(dependency)) priorUsed.push(dependency)
-      const readOnly =
-        robustStatistic === 'is.unsorted'
-          ? primitiveOrderingInspection(expr)
-          : robustStatistic === 'sort.list'
-            ? primitiveSortList(expr)
-            : robustStatistic === 'inverse.rle'
-              ? primitiveRunDecoding(expr)
-              : robustStatistic === 'lengths'
-                ? primitiveGroupCardinality(expr)
-                : robustStatistic === '.subset' || robustStatistic === '.subset2'
-                  ? primitiveVectorExtraction(expr)
-                  : robustStatistic === 'match'
-                    ? primitiveValueMatching(expr)
-                    : robustStatistic === 'seq.int'
-                      ? primitiveScanSequence(expr)
-                      : nativeRepetitionCalls.has(robustStatistic)
-                        ? primitiveNativeRepetition(expr)
-                        : robustStatistic === 'matrix'
-                          ? primitiveMatrixConstruction(expr)
-                          : robustStatistic === 'max.col'
-                            ? primitiveDeterministicMaxColumn(expr)
-                            : robustStatistic === 'findInterval'
-                              ? primitiveEventAnchors(expr)
-                              : robustStatistic === 'tabulate'
-                                ? primitiveSpeciesCounts(expr)
-                                : robustStatistic === '.bincode'
-                                  ? primitiveExposureBins(expr)
-                                  : robustStatistic === 'append'
-                                    ? primitiveSegmentInsertion(expr)
-                                    : robustStatistic === '%%'
-                                      ? primitiveRemainder(expr)
-                                      : robustStatistic === 'round' || robustStatistic === 'signif'
-                                        ? primitiveRounding(expr)
-                                        : robustStatistic === 'log' || robustStatistic === 'logb'
-                                          ? primitiveLogarithm(expr)
-                                          : robustStatistic === 'atan2'
-                                            ? primitiveBearingTransform(expr)
-                                            : robustStatistic === 'beta' ||
-                                                robustStatistic === 'lbeta'
-                                              ? primitiveBetaNormalizer(expr)
-                                              : robustStatistic === 'besselJ' ||
-                                                  robustStatistic === 'besselY'
-                                                ? primitiveCylindricalWave(expr)
-                                                : robustStatistic === 'psigamma'
-                                                  ? primitivePolygamma(expr)
-                                                  : robustStatistic === 'besselI' ||
-                                                      robustStatistic === 'besselK'
-                                                    ? primitiveScaledBessel(expr)
-                                                    : robustStatistic === 'zapsmall'
-                                                      ? primitiveResidualCleanup(expr)
-                                                      : fastMatrixReductionCalls.has(
-                                                            robustStatistic
-                                                          )
-                                                        ? primitiveFastMatrixReduction(expr)
-                                                        : robustStatistic === 'norm'
-                                                          ? primitiveMatrixNorm(expr)
-                                                          : robustStatistic === 'crossprod' ||
-                                                              robustStatistic === 'tcrossprod'
-                                                            ? primitiveMatrixCrossProduct(expr)
-                                                            : robustStatistic === 'polyroot'
-                                                              ? primitivePolynomialRoots(expr)
-                                                              : robustStatistic === 'choose' ||
-                                                                  robustStatistic === 'lchoose'
-                                                                ? primitiveCombination(expr)
-                                                                : robustStatistic === 'factorial' ||
-                                                                    robustStatistic === 'lfactorial'
-                                                                  ? primitiveFactorialNormalizer(
-                                                                      expr
-                                                                    )
-                                                                  : robustStatistic === 'Mod' ||
-                                                                      robustStatistic === 'Arg' ||
-                                                                      robustStatistic === 'Conj' ||
-                                                                      robustStatistic === 'Re' ||
-                                                                      robustStatistic === 'Im'
-                                                                    ? primitiveComplexProjection(
-                                                                        expr
-                                                                      )
-                                                                    : primitiveUnaryMathTransform(
-                                                                        expr
-                                                                      )
+      const readOnly = checkReadOnly(expr)
       if (expr.sourceOffset !== undefined) {
         readOnlyMapCalls?.set(
           expr.sourceOffset,
