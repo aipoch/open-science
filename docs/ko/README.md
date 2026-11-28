@@ -71,7 +71,7 @@ _2026년 11월 24일_
 
 [`.science` 패키지](https://aipoch.com/docs/guides/research-packages/)에 공유할 대화 분기, 파일 버전, Notebook 기록과 검증 자료를 담습니다. 받는 사람은 자신의 프로젝트에 패키지를 가져와 읽기 전용 기록을 열고 그림이나 표에 사용된 입력 자료를 확인할 수 있습니다. 검증 기록은 보낸 쪽에서 수행한 확인을 보여 줍니다. 데스크톱 앱에서 포크하면 편집 가능한 사본이 만들어집니다.
 
-같은 작업을 [연구 영상](https://aipoch.com/docs/guides/research-films/)으로 소개할 수 있습니다. 데스크톱 앱에서 완료된 대화 분기를 선택해 영상을 생성합니다. 설정한 모델이 세션 기록을 바탕으로 발표 내용을 구성하고 로컬 음성 엔진이 영어 내레이션을 만듭니다. 영상을 검토한 뒤 HTML 플레이어를 내려받거나 MP4로 내보냅니다. 포함된 분기에 이미 생성된 영상이 있다면 그 플레이어를 `.science` 패키지에 담을 수도 있습니다.
+같은 작업을 [연구 영상](https://aipoch.com/docs/guides/research-films/)으로 소개할 수 있습니다. 데스크톱 앱에서 완료된 대화 분기를 선택해 영상을 생성합니다. 설정한 모델이 세션 기록을 바탕으로 발표 내용을 구성하며, 영상에는 영어 내레이션이 포함됩니다. 영상을 검토한 뒤 HTML 플레이어를 내려받거나 MP4로 내보냅니다. 포함된 분기에 이미 생성된 영상이 있다면 그 플레이어를 `.science` 패키지에 담을 수도 있습니다.
 
 ## 🚀 빠른 시작
 
@@ -133,7 +133,7 @@ Windows 재설치 시 연구 데이터는 유지됩니다. 완전히 초기화�
 
 초기 설정을 마친 뒤에는 시스템 설정에서 화면 모양과 알림을 조정할 수 있습니다. 일반 설정에서는 앱 정보, 진단 항목, 명령줄 도구를 확인하고 수동 설치 및 업데이트 안내서를 열 수 있습니다.
 
-기존 모델 설정 탭은 **로컬 기능**으로 바뀌어 PDF 추출, OCR 언어 팩, 연구 내레이션을 관리합니다. 내레이션에는 로컬에 설치된 음성 모델이 필요합니다.
+기존 모델 설정 탭은 **로컬 기능**으로 바뀌어 PDF 추출, OCR 언어 팩, 연구 내레이션을 관리합니다. 로컬 내레이션에는 로컬에 설치된 음성 모델이 필요합니다.
 
 <table>
   <tr>
@@ -173,17 +173,18 @@ Windows 재설치 시 연구 데이터는 유지됩니다. 완전히 초기화�
 
 AIPOCH는 논문 찾기부터 논문 내용에 대한 답변, 연구 계획 실행까지 다양한 작업에서 AIPOCH Open-Science를 평가했습니다. 아래 결과는 AIPOCH가 직접 실행한 평가에서 얻었으며, 각 점수는 특정 작업과 평가 설정에 해당합니다. 계산 결과 재현과 데이터 기반 가설 발견도 평가했습니다.
 
-| 작업                        | Benchmark              | AIPOCH Open-Science의 결과                                                                                                                             |
-| --------------------------- | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| 목표 논문 찾기              | LitQA2-FullText-Search | LitQA2-FullText-Search의 **테스트 75문항 중 68문항**에서 목표 논문이 상위 30개 결과에 포함되었습니다(**Recall@30 90.67%**, gpt-6-astra).               |
-| 문헌을 바탕으로 답변하기    | LitQA2-FullText        | 별도의 LitQA2-FullText 평가에서 Open-Science는 **75문항 중 70문항에 정답**을 제시했습니다(**정확도 93.33%**, deepseek-flash, Max 추론).                |
-| 인용을 포함한 답변 종합하기 | ScholarQA-CS2          | ScholarQA-CS2 검증 100문항에서 deepseek-v4-flash로 **종합 품질 점수 0.9289/1**을 기록했습니다. 공식 테스트 참고 결과는 다른 문항을 사용합니다.         |
-| 연구 워크플로 실행하기      | ASI-Bench              | 동일 모델을 사용한 로컬 ASI-Bench 평가에서 B4 점수는 Open-Science **59.46**, Codex **55.45**였습니다. B2 점수는 거의 같았습니다(**56.11**, **56.09**). |
-| ML·NLP 실험 재현하기        | AstaBench SUPER-Expert | DeepSeek Flash/Max로 45개 과제를 로컬 평가해 output_match/mean **46.30%**를 기록했습니다.                                                              |
-| 과학 연구 과제 수행         | TB-Science 0.1         | 70개 과제에서 GPT-6 Astra/max: 로컬 실행 210회 중 **145회 통과**(**69.05%**). 공식 순위가 아니며 개별 실행 기록은 공개되지 않았습니다.                 |
-| 생의학 데이터 분석하기      | BiomniBench-DA         | BiomniBench-DA Public 50에서 두 평가 모델의 점수는 **81.04**, **77.06**이었으며 동일 가중치 평균은 **79.05**였습니다.                                  |
-| 발표된 결과 재현            | CORE-Bench-Hard        | CORE-Bench-Hard — 로컬 평가에서 테스트 과제 37개 중 36개 정답(97.30%). 최종 집계에는 재시험이 포함됩니다.                                              |
-| 데이터에서 가설 발견        | DiscoveryBench         | DiscoveryBench — 검증 세트에서 선택한 25개 과제의 로컬 모델 평가 평균은 0.7467/1입니다.                                                                |
+| 작업                        | Benchmark                                 | AIPOCH Open-Science의 결과                                                                                                                             |
+| --------------------------- | ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 목표 논문 찾기              | LitQA2-FullText-Search                    | LitQA2-FullText-Search의 **테스트 75문항 중 68문항**에서 목표 논문이 상위 30개 결과에 포함되었습니다(**Recall@30 90.67%**, gpt-6-astra).               |
+| 문헌을 바탕으로 답변하기    | LitQA2-FullText                           | 별도의 LitQA2-FullText 평가에서 Open-Science는 **75문항 중 70문항에 정답**을 제시했습니다(**정확도 93.33%**, deepseek-flash, Max 추론).                |
+| 인용을 포함한 답변 종합하기 | ScholarQA-CS2                             | ScholarQA-CS2 검증 100문항에서 deepseek-v4-flash로 **종합 품질 점수 0.9289/1**을 기록했습니다. 공식 테스트 참고 결과는 다른 문항을 사용합니다.         |
+| 연구 워크플로 실행하기      | ASI-Bench                                 | 동일 모델을 사용한 로컬 ASI-Bench 평가에서 B4 점수는 Open-Science **59.46**, Codex **55.45**였습니다. B2 점수는 거의 같았습니다(**56.11**, **56.09**). |
+| ML·NLP 실험 재현하기        | AstaBench SUPER-Expert                    | DeepSeek Flash/Max로 45개 과제를 로컬 평가해 output_match/mean **46.30%**를 기록했습니다.                                                              |
+| 과학 연구 과제 수행         | TB-Science 0.1                            | 70개 과제에서 GPT-6 Astra/max: 로컬 실행 210회 중 **145회 통과**(**69.05%**). 공식 순위가 아니며 개별 실행 기록은 공개되지 않았습니다.                 |
+| 생의학 데이터 분석하기      | BiomniBench-DA                            | BiomniBench-DA Public 50에서 두 평가 모델의 점수는 **81.04**, **77.06**이었으며 동일 가중치 평균은 **79.05**였습니다.                                  |
+| 발표된 결과 재현            | CORE-Bench-Hard                           | CORE-Bench-Hard — 로컬 평가에서 테스트 과제 37개 중 36개 정답(97.30%). 최종 집계에는 재시험이 포함됩니다.                                              |
+| 데이터에서 가설 발견        | DiscoveryBench                            | DiscoveryBench — 검증 세트에서 선택한 25개 과제의 로컬 모델 평가 평균은 0.7467/1입니다.                                                                |
+| 연구 논문 비교              | ArxivDIGESTables-Clean, 테스트 과제 100개 | **49.03%** (`score_tables/mean`). 대체 평가 모델을 사용한 로컬 평가.                                                                                   |
 
 <details>
 <summary>평가 범위 및 보고서</summary>
@@ -193,6 +194,8 @@ AIPOCH는 논문 찾기부터 논문 내용에 대한 답변, 연구 계획 실�
 자세한 평가 내용은 [AstaBench 및 ASI-Bench 보고서](https://aipoch.com/benchmark/open-science), [BiomniBench-DA 보고서](https://aipoch.com/blog/open-science-biomnibench-da), [TB-Science 0.1 로컬 결과](https://aipoch.com/blog/aipoch-open-science-terminal-bench-science-local-result)를 참고하세요. [SUPER-Expert 로컬 결과](https://aipoch.com/blog/aipoch-open-science-astabench-super-expert-local-result)도 참고하세요.
 
 [CORE-Bench-Hard · 재현성 평가 보고서](https://aipoch.com/blog/aipoch-open-science-core-bench-hard)
+
+[ArxivDIGESTables-Clean · 평가 보고서](https://aipoch.com/blog/aipoch-open-science-arxivdigestables-clean)
 
 </details>
 
