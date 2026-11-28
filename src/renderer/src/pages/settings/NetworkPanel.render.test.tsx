@@ -264,7 +264,7 @@ describe('NetworkPanel offline retry', () => {
       )
     })
 
-    expect(container.querySelector('[aria-label="Notebook network access"]')).toBeNull()
+    expect(container.querySelector('[aria-label="Agent & Notebook network"]')).toBeNull()
 
     await act(async () => {
       root.render(
@@ -473,7 +473,7 @@ describe('NetworkPanel offline retry', () => {
 })
 
 const networkEntry = (): HTMLElement =>
-  container.querySelector('[aria-label="Notebook network access"]')!
+  container.querySelector('[data-settings-anchor="network.domains"]')!
 
 describe('Notebook network entry', () => {
   it('shows three peer rows in default Relaxed mode and handles empty addresses', async () => {

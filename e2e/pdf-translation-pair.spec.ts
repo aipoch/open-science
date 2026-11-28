@@ -1157,9 +1157,11 @@ for (const variant of [
       const calls = directRequests.length
       const retryLayout = panel.getByRole('button', { name: 'Retry PDF layout', exact: true })
       await retryLayout.click()
+      // Clicking dismisses the tooltip. Leave its trigger before hovering again.
+      await page.mouse.move(0, 0)
+      await expect(retryLayout).toBeEnabled({ timeout: 60000 })
       await retryLayout.hover()
       await expect(page.getByRole('tooltip')).toContainText('Layout unchanged', { timeout: 60000 })
-      await expect(retryLayout).toBeEnabled()
       expect(directRequests).toHaveLength(calls)
       await expect(first.locator('[data-pdf-translated-page] [data-pdf-text-layer]')).toContainText(
         'Cell growth'

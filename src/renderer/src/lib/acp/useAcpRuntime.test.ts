@@ -235,6 +235,23 @@ describe('useAcpRuntime snapshot action failures', () => {
     expect(result.current.isConnecting).toBe(false)
   })
 
+  it('keeps a late connection failure out of a fresh draft', async () => {
+    const deferred = createDeferred<AcpStateSnapshot>()
+    acpApi.connect.mockReturnValueOnce(deferred.promise)
+    const { result } = await mountRuntime()
+    let inFlight: Promise<AcpRuntimeState | undefined>
+    act(() => {
+      inFlight = result.current.connect('/workspace/project')
+    })
+    act(() => result.current.clearActionError())
+    await act(async () => {
+      deferred.reject(new Error('previous connection failed'))
+      await inFlight
+    })
+    expect(result.current.actionError).toBeNull()
+    expect(result.current.isConnecting).toBe(false)
+  })
+
   it('returns cancellation rejection to the initiating surface', async () => {
     acpApi.cancel.mockRejectedValueOnce('raw failure string')
     const { result } = await mountRuntime()

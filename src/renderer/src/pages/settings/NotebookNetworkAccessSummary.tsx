@@ -1,3 +1,4 @@
+import { effectiveNotebookStrictWhitelist } from '../../../../shared/notebook-network'
 import { Ban, Check, ChevronRight, CircleHelp, List } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
@@ -49,7 +50,7 @@ export const NotebookNetworkAccessSummary = ({
       description: strictNetwork ? (
         <>
           {t('{{count}} rules', {
-            count: notebookNetwork.strictWhitelist?.length ?? 0,
+            count: effectiveNotebookStrictWhitelist(notebookNetwork).length,
             defaultValue_one: '{{count}} rule'
           })}
           {' · '}
@@ -69,7 +70,7 @@ export const NotebookNetworkAccessSummary = ({
   ]
   return (
     <SettingsSection
-      title={t('Notebook network access')}
+      title={t('Agent & Notebook network')}
       titleAccessory={
         <span
           className={cn(
@@ -81,7 +82,7 @@ export const NotebookNetworkAccessSummary = ({
           {strictNetwork ? t('Strict mode') : t('Relaxed mode')}
         </span>
       }
-      aria-label={t('Notebook network access')}
+      aria-label={t('Agent & Notebook network')}
       data-settings-anchor="network.domains"
       data-testid={testId}
     >

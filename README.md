@@ -69,7 +69,7 @@ _November 24, 2026_
 
 **Hand off a result with a [`.science` package](https://aipoch.com/docs/guides/research-packages/).** Export the conversation branches, file versions, Notebook records, and verification evidence you want to share. Recipients can import the package into their own projects, open the read-only record, and trace a figure or table back to its inputs. Verification records describe the sender’s checks. In the desktop app, **Fork to continue** creates a writable copy.
 
-**Present the same work as a [Research Film](https://aipoch.com/docs/guides/research-films/).** In the desktop app, choose **Generate research film** on a completed conversation branch. Your configured model prepares the presentation from the recorded session, and the local speech engine generates English narration. Review the film, then download the HTML player or export an MP4. A `.science` package can also carry the player for a film already generated on an included branch.
+**Present the same work as a [Research Film](https://aipoch.com/docs/guides/research-films/).** In the desktop app, choose **Generate research film** on a completed conversation branch. Your configured model prepares the presentation from the recorded session, and the film includes English narration. Review the film, then download the HTML player or export an MP4. A `.science` package can also carry the player for a film already generated on an included branch.
 
 ## 🚀 Quick Start
 
@@ -131,7 +131,7 @@ Complete the required environment and agent-runtime checks and test your model c
 
 After setup, open **System** settings to change appearance or notifications. In **General**, you can find diagnostics, command-line tools, and the guide to manual installation and updates.
 
-The former Model settings tab is now **Local capabilities**, covering PDF extraction, OCR language packs, and research narration. Narration requires a locally installed voice model.
+The former Model settings tab is now **Local capabilities**, covering PDF extraction, OCR language packs, and research narration. Local narration requires a locally installed voice model.
 
 <table>
   <tr>
@@ -266,13 +266,14 @@ AIPOCH evaluated Open-Science on research tasks ranging from literature search t
 | Reproduce published results           | CORE-Bench-Hard                           | **36/37** tasks correct (97.30%, including retests).                                    |
 | Analyze biomedical data               | BiomniBench-DA, Public 50                 | **79.05** mean judge score (81.04 and 77.06, weighted equally).                         |
 | Generate hypotheses                   | DiscoveryBench, 25 validation tasks       | **0.7467/1** mean score using a local model judge.                                      |
+| Compare research papers               | ArxivDIGESTables-Clean, 100 test tasks    | **49.03%** (`score_tables/mean`). Local run with an alternate judge.                    |
 
 <details>
 <summary>Evaluation scope and reports</summary>
 
 These local runs used different metrics, models, and task sets from August to November 2026. The scores describe those runs. They were not rerun for this release.
 
-[Evaluation overview](https://aipoch.com/benchmark/open-science) · [CORE-Bench-Hard report](https://aipoch.com/blog/aipoch-open-science-core-bench-hard) · [BiomniBench-DA report](https://aipoch.com/blog/open-science-biomnibench-da) · [TB-Science 0.1 local result](https://aipoch.com/blog/aipoch-open-science-terminal-bench-science-local-result) · [SUPER-Expert local result](https://aipoch.com/blog/aipoch-open-science-astabench-super-expert-local-result)
+[Evaluation overview](https://aipoch.com/benchmark/open-science) · [CORE-Bench-Hard report](https://aipoch.com/blog/aipoch-open-science-core-bench-hard) · [BiomniBench-DA report](https://aipoch.com/blog/open-science-biomnibench-da) · [TB-Science 0.1 local result](https://aipoch.com/blog/aipoch-open-science-terminal-bench-science-local-result) · [SUPER-Expert local result](https://aipoch.com/blog/aipoch-open-science-astabench-super-expert-local-result) · [ArxivDIGESTables-Clean · report](https://aipoch.com/blog/aipoch-open-science-arxivdigestables-clean)
 
 </details>
 

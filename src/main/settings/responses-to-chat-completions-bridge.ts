@@ -1,3 +1,4 @@
+import { resolveProviderHttpAccess } from './provider-http-access'
 import { Readable } from 'node:stream'
 import type { ReadableStream as NodeReadableStream } from 'node:stream/web'
 import { pipeline } from 'node:stream/promises'
@@ -163,6 +164,7 @@ export class ResponsesToChatCompletionsBridge {
         catalog,
         target: {
           url: chatUrl(this.target.baseUrl),
+          isInsecureHttpAllowed: this.target.isInsecureHttpAllowed,
           ...(this.target.key ? { key: this.target.key } : {}),
           ...(this.target.model ? { model: this.target.model } : {}),
           ...(this.target.vendorId ? { vendorId: this.target.vendorId } : {}),
@@ -484,6 +486,8 @@ export class ResponsesToChatCompletionsBridge {
         ? { 'x-opencode-session': goSession, 'user-agent': 'open-science/codex-bridge' }
         : {})
     }
+    const upstreamUrl = chatUrl(target.baseUrl)
+    const allowInsecureHttp = await resolveProviderHttpAccess(target, upstreamUrl)
     const replay = this.deterministicErrors.get(replayKey)
     if (replay) {
       json(response, providerErrorClientStatus(replay.upstreamStatus), {
@@ -501,7 +505,8 @@ export class ResponsesToChatCompletionsBridge {
       target.requestPolicy,
       target.key
     )
-    const upstream = await fetchProviderRequest(fetchUpstream, chatUrl(target.baseUrl), {
+    const upstream = await fetchProviderRequest(fetchUpstream, upstreamUrl, {
+      allowInsecureHttp,
       method: 'POST',
       headers,
       body: chatRequestBody,

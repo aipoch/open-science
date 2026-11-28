@@ -10911,6 +10911,7 @@
         "src/main/settings/codebuddy-skill-selector-transport.ts",
         "src/main/settings/codex-transport-fallback-log.ts",
         "src/main/settings/provider-failure-observation.ts",
+        "src/main/settings/provider-http-access.ts",
         "src/main/settings/provider-loopback-http-host.ts",
         "src/main/settings/skill-selection-contract.ts",
         "src/main/settings/skill-selector-routing.ts"
@@ -10920,6 +10921,7 @@
         "src/main/settings/codebuddy-chat-request-adapter.ts": "policy",
         "src/main/settings/codex-transport-fallback-log.ts": "host-infrastructure",
         "src/main/settings/provider-failure-observation.ts": "policy",
+        "src/main/settings/provider-http-access.ts": "host-infrastructure",
         "src/main/settings/provider-loopback-http-host.ts": "host-infrastructure",
         "src/main/settings/skill-selection-contract.ts": "domain-contract",
         "src/main/settings/skill-selector-routing.ts": "policy"

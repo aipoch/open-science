@@ -975,9 +975,13 @@ describe('desktop E2E routing', () => {
     }
     expect(run('e2e_accessibility_macos')).toBe('npm run test:e2e:accessibility:signal')
     for (const files of Object.values(lanes)) expect(files.length).toBeGreaterThan(0)
-    // Windows mainline journeys/workspace follow the macOS script that owns each tagged spec.
-    const windowsFunctional = tagged.filter((path) => lanes.e2e_functional_macos.includes(path))
-    const windowsWorkspace = tagged.filter((path) => lanes.e2e_workspace_macos.includes(path))
+    // PR Windows jobs select by product journey tag, including tagged supplemental regressions.
+    const windowsFunctional = tagged.filter((path) =>
+      /@pr-mainline-(?:projects|notebook|windows)\b/.test(readFileSync(path, 'utf8'))
+    )
+    const windowsWorkspace = tagged.filter((path) =>
+      /@pr-mainline-(?:conversation|files)\b/.test(readFileSync(path, 'utf8'))
+    )
     expect([...windowsFunctional, ...windowsWorkspace].sort()).toEqual(tagged.sort())
     return {
       ...lanes,
@@ -988,6 +992,7 @@ describe('desktop E2E routing', () => {
 
   it.each([
     ['e2e/accessibility.spec.ts', ['e2e_accessibility_macos']],
+    ['e2e/custom-provider-http.spec.ts', ['e2e_workspace_windows', 'e2e_regressions_macos']],
     ['e2e/desktop-runtime-recovery.spec.ts', ['e2e_regressions_macos']],
     ['e2e/delegation-resume.spec.ts', ['e2e_delegation_macos']],
     ['e2e/session-fork.spec.ts', ['e2e_functional_macos']],

@@ -71,7 +71,7 @@ _24 de noviembre de 2026_
 
 Entregue un [paquete `.science`](https://aipoch.com/docs/guides/research-packages/) con las ramas de conversación, versiones de archivos, registros del Notebook y comprobaciones que desee compartir. Quien lo reciba podrá importarlo en su proyecto y consultar el registro de solo lectura para rastrear una figura o tabla hasta sus datos de entrada. Las verificaciones corresponden a quien envía el paquete. En la aplicación de escritorio, una bifurcación crea una copia editable.
 
-Presente el trabajo en un [vídeo de investigación](https://aipoch.com/docs/guides/research-films/). En la aplicación de escritorio, genere el vídeo a partir de una rama de conversación finalizada. El modelo configurado prepara la presentación a partir del registro y el motor de voz local genera la narración en inglés. Revise el vídeo y descargue el reproductor HTML o exporte un MP4. El paquete `.science` también puede incluir el reproductor de un vídeo ya generado en una de sus ramas.
+Presente el trabajo en un [vídeo de investigación](https://aipoch.com/docs/guides/research-films/). En la aplicación de escritorio, genere el vídeo a partir de una rama de conversación finalizada. El modelo configurado prepara la presentación a partir del registro y el vídeo incluye narración en inglés. Revise el vídeo y descargue el reproductor HTML o exporte un MP4. El paquete `.science` también puede incluir el reproductor de un vídeo ya generado en una de sus ramas.
 
 ## 🚀 Inicio rápido
 
@@ -133,7 +133,7 @@ Complete las comprobaciones obligatorias del entorno y del runtime del agente y 
 
 En los ajustes del sistema encontrará las opciones de apariencia y notificaciones. La sección **General** incluye la guía de instalación y actualización manuales.
 
-La antigua pestaña Modelo ahora se llama **Capacidades locales** e incluye extracción de PDF, paquetes de idioma OCR y narración de investigaciones. La narración requiere un modelo de voz instalado localmente.
+La antigua pestaña Modelo ahora se llama **Capacidades locales** e incluye extracción de PDF, paquetes de idioma OCR y narración de investigaciones. La narración local requiere un modelo de voz instalado localmente.
 
 <table>
 <tr>
@@ -173,17 +173,18 @@ La antigua pestaña Modelo ahora se llama **Capacidades locales** e incluye extr
 
 AIPOCH evaluó AIPOCH Open-Science en tareas que abarcan encontrar un artículo, responder preguntas sobre su contenido y ejecutar un plan de investigación. Los resultados siguientes proceden de ejecuciones propias de AIPOCH. Cada puntuación corresponde a una tarea y una configuración de evaluación concretas. La evaluación también abarca la reproducción de resultados computacionales y la formulación de hipótesis a partir de datos.
 
-| Tarea                                | Benchmark              | Resultado de AIPOCH Open-Science                                                                                                                                                                           |
-| ------------------------------------ | ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Encontrar el artículo objetivo       | LitQA2-FullText-Search | En **68 de las 75 preguntas de prueba**, el artículo objetivo apareció entre los primeros 30 resultados de LitQA2-FullText-Search (**90.67% Recall@30**, gpt-6-astra).                                     |
-| Responder a partir de la literatura  | LitQA2-FullText        | En una ejecución independiente de LitQA2-FullText, Open-Science respondió correctamente **70 de 75 preguntas** (**93.33% de exactitud**, deepseek-flash con razonamiento Max).                             |
-| Elaborar una síntesis con citas      | ScholarQA-CS2          | En 100 preguntas de validación de ScholarQA-CS2, Open-Science obtuvo una **puntuación compuesta de calidad de 0.9289/1** con deepseek-v4-flash. Las referencias de la prueba oficial usan otras preguntas. |
-| Ejecutar flujos de investigación     | ASI-Bench              | En ejecuciones locales de ASI-Bench con el mismo modelo, Open-Science obtuvo **59.46** en B4 y Codex **55.45**. En B2 las puntuaciones fueron casi idénticas (**56.11** y **56.09**).                      |
-| Reproducir experimentos de ML/PLN    | AstaBench SUPER-Expert | **46.30%** en output_match/mean en una prueba local de 45 tareas con DeepSeek Flash/Max.                                                                                                                   |
-| Ejecutar tareas científicas          | TB-Science 0.1         | En 70 tareas, **145 de 210** ejecuciones locales superadas (**69.05%**) con GPT-6 Astra/max. No es una posición oficial; no hay registros individuales públicos.                                           |
-| Analizar datos biomédicos            | BiomniBench-DA         | En BiomniBench-DA Public 50, dos modelos jueces puntuaron los resultados con **81.04** y **77.06**. Su media con igual ponderación fue **79.05**.                                                          |
-| Reproducir resultados publicados     | CORE-Bench-Hard        | CORE-Bench-Hard — 36 de 37 tareas de prueba correctas (97,30 %) en la evaluación local. El recuento incluye repeticiones.                                                                                  |
-| Formular hipótesis a partir de datos | DiscoveryBench         | DiscoveryBench — En un subconjunto de 25 tareas de validación, la puntuación media del modelo evaluador local fue de 0,7467/1.                                                                             |
+| Tarea                                | Benchmark                                    | Resultado de AIPOCH Open-Science                                                                                                                                                                           |
+| ------------------------------------ | -------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Encontrar el artículo objetivo       | LitQA2-FullText-Search                       | En **68 de las 75 preguntas de prueba**, el artículo objetivo apareció entre los primeros 30 resultados de LitQA2-FullText-Search (**90.67% Recall@30**, gpt-6-astra).                                     |
+| Responder a partir de la literatura  | LitQA2-FullText                              | En una ejecución independiente de LitQA2-FullText, Open-Science respondió correctamente **70 de 75 preguntas** (**93.33% de exactitud**, deepseek-flash con razonamiento Max).                             |
+| Elaborar una síntesis con citas      | ScholarQA-CS2                                | En 100 preguntas de validación de ScholarQA-CS2, Open-Science obtuvo una **puntuación compuesta de calidad de 0.9289/1** con deepseek-v4-flash. Las referencias de la prueba oficial usan otras preguntas. |
+| Ejecutar flujos de investigación     | ASI-Bench                                    | En ejecuciones locales de ASI-Bench con el mismo modelo, Open-Science obtuvo **59.46** en B4 y Codex **55.45**. En B2 las puntuaciones fueron casi idénticas (**56.11** y **56.09**).                      |
+| Reproducir experimentos de ML/PLN    | AstaBench SUPER-Expert                       | **46.30%** en output_match/mean en una prueba local de 45 tareas con DeepSeek Flash/Max.                                                                                                                   |
+| Ejecutar tareas científicas          | TB-Science 0.1                               | En 70 tareas, **145 de 210** ejecuciones locales superadas (**69.05%**) con GPT-6 Astra/max. No es una posición oficial; no hay registros individuales públicos.                                           |
+| Analizar datos biomédicos            | BiomniBench-DA                               | En BiomniBench-DA Public 50, dos modelos jueces puntuaron los resultados con **81.04** y **77.06**. Su media con igual ponderación fue **79.05**.                                                          |
+| Reproducir resultados publicados     | CORE-Bench-Hard                              | CORE-Bench-Hard — 36 de 37 tareas de prueba correctas (97,30 %) en la evaluación local. El recuento incluye repeticiones.                                                                                  |
+| Formular hipótesis a partir de datos | DiscoveryBench                               | DiscoveryBench — En un subconjunto de 25 tareas de validación, la puntuación media del modelo evaluador local fue de 0,7467/1.                                                                             |
+| Comparar artículos científicos       | ArxivDIGESTables-Clean, 100 tareas de prueba | **49.03%** (`score_tables/mean`). Evaluación local con un modelo evaluador alternativo.                                                                                                                    |
 
 <details>
 <summary>Alcance de la evaluación e informes</summary>
@@ -193,6 +194,8 @@ AIPOCH evaluó AIPOCH Open-Science en tareas que abarcan encontrar un artículo,
 Consulte el [informe de AstaBench y ASI-Bench](https://aipoch.com/benchmark/open-science) y el [informe de BiomniBench-DA](https://aipoch.com/blog/open-science-biomnibench-da) para conocer los detalles. Véase también el [resultado local de TB-Science 0.1](https://aipoch.com/blog/aipoch-open-science-terminal-bench-science-local-result). Véase también el [resultado local de SUPER-Expert](https://aipoch.com/blog/aipoch-open-science-astabench-super-expert-local-result).
 
 [CORE-Bench-Hard · Informe de reproducibilidad](https://aipoch.com/blog/aipoch-open-science-core-bench-hard)
+
+[ArxivDIGESTables-Clean · Informe](https://aipoch.com/blog/aipoch-open-science-arxivdigestables-clean)
 
 </details>
 

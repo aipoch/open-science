@@ -235,7 +235,7 @@ describe('Settings core application commands', () => {
   })
 
   it('returns validated-save outcomes intact through local and remote command serialization', async () => {
-    const { dependencies } = createDependencies()
+    const { dependencies, serviceMethod } = createDependencies()
     const result = {
       validation: { ok: true, category: 'ok' as const },
       providerId: 'committed',
@@ -244,11 +244,32 @@ describe('Settings core application commands', () => {
     vi.mocked(dependencies.runtime.saveValidatedProvider).mockResolvedValue(result)
     const router = createApplicationCommandRouter()
     registerCoreSettingsApplicationCommands(router.registrar, dependencies)
+    serviceMethod('validateProvider').mockResolvedValue(result.validation)
     for (const location of ['local', 'remote'] as const) {
+      const edit = {
+        id: 'committed',
+        type: 'custom' as const,
+        allowInsecureHttp: location === 'remote'
+      }
+      const validate = { providerId: edit.id, allowInsecureHttp: edit.allowInsecureHttp }
       const returned = await router.dispatcher.invoke(
         settingsCoreApplicationCommands.saveValidatedProvider,
-        invocation([{ id: 'committed', type: 'custom' }] as const, location)
+        invocation([edit] as const, location)
       )
+      expect(dependencies.runtime.saveValidatedProvider).toHaveBeenLastCalledWith({
+        ...edit,
+        allowInsecureHttp: location === 'local'
+      })
+      await expect(
+        router.dispatcher.invoke(
+          settingsCoreApplicationCommands.validateProvider,
+          invocation([validate] as const, location)
+        )
+      ).resolves.toEqual(result.validation)
+      expect(serviceMethod('validateProvider')).toHaveBeenLastCalledWith({
+        ...validate,
+        allowInsecureHttp: location === 'local'
+      })
       expect(JSON.parse(JSON.stringify(returned))).toEqual(result)
     }
   })
@@ -560,7 +581,10 @@ describe('Settings core application commands', () => {
       reasoningEffort: 'low'
     })
     expect(serviceMethod('setSubagentModel')).toHaveBeenCalledWith({ mode: 'inherit' })
-    expect(serviceMethod('validateProvider')).toHaveBeenCalledWith({ providerId: 'provider-1' })
+    expect(serviceMethod('validateProvider')).toHaveBeenCalledWith({
+      providerId: 'provider-1',
+      allowInsecureHttp: false
+    })
   })
 
   it('rejects local-only commands before an owner can run', async () => {

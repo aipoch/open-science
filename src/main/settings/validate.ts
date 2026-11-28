@@ -599,6 +599,7 @@ const validateProviderThroughResponsesToChatCompletionsBridge = async (
       baseUrl: targetBaseUrl,
       key: provider.key,
       model: provider.model,
+      allowInsecureHttp: provider.allowInsecureHttp,
       ...(provider.requestPolicy && { requestPolicy: provider.requestPolicy })
     },
     fetchImpl
@@ -637,7 +638,12 @@ const validateProviderThroughNativeResponsesCompatibility = async (
   }
 
   const proxy = new NativeResponsesCompatibilityProxy(
-    { baseUrl: targetBaseUrl, key: provider.key, model: provider.model },
+    {
+      baseUrl: targetBaseUrl,
+      key: provider.key,
+      model: provider.model,
+      allowInsecureHttp: provider.allowInsecureHttp
+    },
     createBoundedValidationFetch(fetchImpl)
   )
   return validateProviderThroughLocalResponsesAdapter(
@@ -697,6 +703,7 @@ const validateCustomProvider = async (
   try {
     const fetchUpstream = withProviderRequestPolicy(fetchImpl, provider.requestPolicy, provider.key)
     const response = await fetchProviderRequest(fetchUpstream, request.url, {
+      allowInsecureHttp: provider.allowInsecureHttp,
       method: 'POST',
       headers: request.headers,
       body: request.body,

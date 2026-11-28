@@ -1,3 +1,4 @@
+import { MODEL_HTTP_DESTINATION_NOT_ALLOWED } from '../application-command-contract'
 import { providerErrorExcerpt } from '@aipoch/providers/errors'
 import { readHarnessErrorDiagnostics } from '../failure/contract'
 import type {
@@ -49,6 +50,11 @@ export const readPersistedFailure = (value: Record<string, unknown>): Classified
       if (typeof source[key] === 'string') diagnostics[key] = source[key]
     if (harness) {
       Object.assign(diagnostics, readHarnessErrorDiagnostics(source), { protocol })
+      if (
+        failure.reason === 'configuration/model-http-destination-not-allowed' &&
+        source.code === MODEL_HTTP_DESTINATION_NOT_ALLOWED
+      )
+        diagnostics.code = source.code
     } else {
       for (const key of ['code', 'requestId', 'raw', 'adapterCode', 'phase'] as const)
         if (typeof source[key] === 'string') diagnostics[key] = source[key]

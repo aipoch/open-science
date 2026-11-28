@@ -48,10 +48,39 @@ import { codexBridgeStaticMcpTools } from './codex-bridge-tools'
 import type { ProviderAccountsModule, ProviderRuntimeTarget } from './provider-accounts'
 
 import type { StoredSettings } from './types'
+import { providerNetworkDestinationIsTrusted } from '../../shared/provider-network-authorization'
+
+const providerHttpIsTrusted = (settings: StoredSettings, baseUrl?: string): boolean =>
+  providerNetworkDestinationIsTrusted(
+    baseUrl ?? '',
+    settings.notebookNetwork?.trustedPrivateDestinations ?? []
+  )
 type BackendRouteProviderPort = Pick<
   ProviderAccountsModule,
   'resolveRuntimeTarget' | 'resolveRuntimeModelCatalog'
 >
+
+const resolveRuntimeTargetForSettings = (
+  providers: BackendRouteProviderPort,
+  settings: StoredSettings,
+  provider: Parameters<BackendRouteProviderPort['resolveRuntimeTarget']>[0],
+  selection: Parameters<BackendRouteProviderPort['resolveRuntimeTarget']>[1],
+  framework: Parameters<BackendRouteProviderPort['resolveRuntimeTarget']>[2]
+): ProviderRuntimeTarget =>
+  providerHttpIsTrusted(settings, provider.baseUrl)
+    ? providers.resolveRuntimeTarget(provider, selection, framework, { allowInsecureHttp: true })
+    : providers.resolveRuntimeTarget(provider, selection, framework)
+
+const resolveRuntimeModelCatalogForSettings = (
+  providers: BackendRouteProviderPort,
+  settings: StoredSettings,
+  provider: Parameters<BackendRouteProviderPort['resolveRuntimeModelCatalog']>[0],
+  framework: Parameters<BackendRouteProviderPort['resolveRuntimeModelCatalog']>[1]
+): ProviderRuntimeTarget[] =>
+  providerHttpIsTrusted(settings, provider.baseUrl)
+    ? providers.resolveRuntimeModelCatalog(provider, framework, { allowInsecureHttp: true })
+    : providers.resolveRuntimeModelCatalog(provider, framework)
+
 type BackendRoutePlanInput = Readonly<{
   settings: StoredSettings
   frameworkId: AgentFrameworkId
@@ -224,7 +253,9 @@ class BackendRoutePlanner {
         : input.frameworkId === 'claude-code'
           ? []
           : activeProvider
-            ? this.providers.resolveRuntimeModelCatalog(
+            ? resolveRuntimeModelCatalogForSettings(
+                this.providers,
+                input.settings,
                 activeProvider,
                 getAgentFramework(input.frameworkId)
               )
@@ -531,7 +562,9 @@ class BackendRoutePlanner {
         configured =
           provider.id === active.providerId
             ? active
-            : this.providers.resolveRuntimeTarget(
+            : resolveRuntimeTargetForSettings(
+                this.providers,
+                settings,
                 provider,
                 { kind: 'configured', requestedModel: provider.model },
                 framework
@@ -542,7 +575,9 @@ class BackendRoutePlanner {
       }
       candidates.push(configured)
       try {
-        candidates.push(...this.providers.resolveRuntimeModelCatalog(provider, framework))
+        candidates.push(
+          ...resolveRuntimeModelCatalogForSettings(this.providers, settings, provider, framework)
+        )
       } catch {
         // A stale model catalog cannot discard the provider's configured target.
       }

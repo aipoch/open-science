@@ -69,7 +69,8 @@
     "packages/providers/src/protocols/chat-completions/stream.ts",
     "packages/providers/src/protocols/chat-completions/stream.test.ts",
     "packages/providers/build.mjs",
-    "packages/providers/THIRD-PARTY-NOTICES"
+    "packages/providers/THIRD-PARTY-NOTICES",
+    "packages/providers/src/transport/request.test.ts"
   ],
   "interfacePaths": [
     "packages/providers/src/providers.ts",
@@ -129,7 +130,8 @@
       "packages/providers/src/protocols/compatibility.test.ts",
       "packages/providers/src/providers/create.test.ts",
       "packages/providers/src/protocols/messages/conversion.test.ts",
-      "packages/providers/src/protocols/chat-completions/stream.test.ts"
+      "packages/providers/src/protocols/chat-completions/stream.test.ts",
+      "packages/providers/src/transport/request.test.ts"
     ],
     "contract": [
       "src/main/settings/responses-request-adapter.architecture.test.ts",

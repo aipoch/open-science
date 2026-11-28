@@ -262,6 +262,8 @@ export type StoredCodexInfo = CodexInfo & {
 }
 
 // The whole settings.json document.
+export type ApplySharedDestination = (undoWrite: () => Promise<void>) => Promise<void>
+
 export type StoredSettings = {
   modalRuntime?: import('../../shared/compute-python-runtime').ComputePythonSelection
   huggingFaceRuntime?: import('../../shared/compute-python-runtime').ComputePythonSelection

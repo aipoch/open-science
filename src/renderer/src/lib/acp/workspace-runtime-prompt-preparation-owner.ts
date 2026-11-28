@@ -453,6 +453,7 @@ const prepareExistingWorkspacePrompt = async (
   } catch (error) {
     if (request.isCurrent?.() === false) return undefined
     reportWorkspaceOperationError(sessionId, getResumeFailureMessage(error), {
+      rawError: error,
       providerTarget:
         request.selectedRuntime.agentConfiguration ?? currentSession?.agentConfiguration
     })

@@ -49,6 +49,7 @@ import type {
 import { LabAccountOwner } from './lab-account-owner'
 import type { UploadOrgCaseInput } from './lab-api'
 import { ProviderTransportOwner } from './provider-transport-owner'
+import { providerNetworkDestinationIsTrusted } from '../../shared/provider-network-authorization'
 import {
   HarnessSessionOwner,
   type HarnessSession,
@@ -679,6 +680,7 @@ class SettingsService {
       }
     })
     this.providers = new ProviderAccountsModule({
+      commitSharedDestination: (write) => this.notebookNetwork.commitSharedDestination(write),
       repository: this.repository,
       storageRoot: this.configRoot,
       userClaudeDir: this.userClaudeDir,
@@ -712,6 +714,13 @@ class SettingsService {
       this.repository,
       new ProviderTransportOwner({
         onProviderFailure: (target, failure) => providerHealth.observe(target, failure),
+        isProviderHttpAllowed: async (url) => {
+          const settings = await this.repository.getSettings()
+          return providerNetworkDestinationIsTrusted(
+            url,
+            settings.notebookNetwork?.trustedPrivateDestinations ?? []
+          )
+        },
         getXaiOAuthAccessToken: (forceRefresh) =>
           this.providers.getXaiOAuthAccessToken(forceRefresh),
         getLabAccessToken: (forceRefresh, expectedServerUrl) =>

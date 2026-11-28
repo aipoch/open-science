@@ -69,6 +69,40 @@ describe('MessagesBridge', () => {
     await Promise.all(servers.splice(0).map(close))
   })
 
+  it('blocks an open Messages session after revocation before reaching the upstream', async () => {
+    let allowed = true
+    const upstream = vi.fn<typeof fetch>(async () =>
+      Response.json({ type: 'message', content: [] })
+    )
+    const target = {
+      id: 'messages',
+      baseUrl: 'http://gateway.invalid',
+      model: 'fixture',
+      isInsecureHttpAllowed: async () => allowed
+    }
+    const bridge = new MessagesBridge([target], target.id, upstream)
+    bridges.push(bridge)
+    const connection = await bridge.start()
+    const request = (): Promise<Response> =>
+      fetch(connection.baseUrl + '/v1/messages', {
+        method: 'POST',
+        headers: {
+          authorization: 'Bearer ' + connection.token,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({ messages: [], stream: false })
+      })
+    expect((await request()).status).toBe(200)
+    expect(upstream).toHaveBeenCalledTimes(1)
+    allowed = false
+    const blocked = await request()
+    expect(blocked.status).toBe(403)
+    expect(await blocked.json()).toMatchObject({
+      error: { code: 'MODEL_HTTP_DESTINATION_NOT_ALLOWED' }
+    })
+    expect(upstream).toHaveBeenCalledTimes(1)
+  })
+
   it.each([false, true])(
     'marks only host connection failures (disconnected=%s)',
     async (disconnected) => {

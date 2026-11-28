@@ -229,6 +229,45 @@ describe('ProviderRuntimeProjectionOwner', () => {
     expect(owner.toProviderView({ ...provider, vendorId: 'openai' }).models).toEqual([])
   })
 
+  it('configures full context limits for discovered Anthropic models in OpenCode', () => {
+    const owner = new ProviderRuntimeProjectionOwner()
+    const framework = getAgentFramework('opencode')
+    const model = 'claude-sonnet-4-6'
+    const maxInputTokens = 990_000
+    const maxOutputTokens = 128_000
+    const provider: StoredProvider = {
+      id: 'anthropic',
+      type: 'official',
+      vendorId: 'anthropic',
+      name: 'Anthropic',
+      modelCatalog: {
+        fetchedAt: 1,
+        models: [
+          ...[model, 'claude-opus-4-6', 'claude-opus-4-7'].map((id) => ({
+            id,
+            maxInputTokens,
+            maxOutputTokens
+          })),
+          { id: 'directory-only-model', maxInputTokens }
+        ]
+      }
+    }
+    const target = owner.resolveRuntimeTarget(provider, { kind: 'required', model }, framework)
+    const config = framework.prepareModelConfig(target.provider, {
+      storageRoot: 'profiles',
+      executablePath: 'opencode',
+      providerModelCatalog: owner.resolveRuntimeModelCatalog(provider, framework)
+    })
+    const models = JSON.parse(config.env!.OPENCODE_CONFIG_CONTENT).provider.anthropic.models
+    const limit = { context: 1_000_000, input: maxInputTokens, output: maxOutputTokens }
+    expect(models).toMatchObject({
+      [model]: { limit },
+      'claude-opus-4-6': { limit },
+      'claude-opus-4-7': { limit }
+    })
+    expect(models['directory-only-model']).not.toHaveProperty('limit')
+  })
+
   it('reads a large inventory once while enumerating its runtime targets', () => {
     const models = Array.from({ length: 1000 }, (_, index) => ({ id: 'model-' + index }))
     const readModels = vi.fn(() => models)
@@ -1267,8 +1306,42 @@ it('rejects a persisted remote HTTP provider before projecting credentials into 
     model: 'model',
     keyRef: encryptKey('PRIVACY_CANARY')
   }
-  expect(() => owner.resolveProvider(provider)).toThrow(/HTTPS/)
+  expect(() => owner.resolveProvider(provider)).toThrow(
+    expect.objectContaining({ code: 'MODEL_HTTP_DESTINATION_NOT_ALLOWED' })
+  )
+  for (const baseUrl of [
+    'http://user:pass@gateway.example',
+    'http://gateway.example?token=x',
+    'invalid'
+  ]) {
+    expect(() => owner.resolveProvider({ ...provider, baseUrl })).toThrow()
+    expect(() => owner.resolveProvider({ ...provider, baseUrl })).not.toThrow(
+      expect.objectContaining({ code: 'MODEL_HTTP_DESTINATION_NOT_ALLOWED' })
+    )
+  }
   expect(owner.toProviderView(provider).baseUrl).toBe(provider.baseUrl)
 })
 
 await configureTestElectronHost(await import('electron'))
+
+it('projects the shared HTTP grant only when the backend supplies it', () => {
+  const owner = new ProviderRuntimeProjectionOwner()
+  const provider: StoredProvider = {
+    id: 'http-gateway',
+    type: 'custom',
+    name: 'HTTP gateway',
+    baseUrl: 'http://gateway.example:8080/v1',
+    model: 'model',
+    keyRef: 'enc:key',
+    apiEndpoints: ['messages']
+  }
+  const framework = getAgentFramework('claude-code')
+  expect(() => owner.resolveRuntimeTarget(provider, { kind: 'configured' }, framework)).toThrow(
+    expect.objectContaining({ code: 'MODEL_HTTP_DESTINATION_NOT_ALLOWED' })
+  )
+  expect(
+    owner.resolveRuntimeTarget(provider, { kind: 'configured' }, framework, {
+      allowInsecureHttp: true
+    }).provider.allowInsecureHttp
+  ).toBe(true)
+})

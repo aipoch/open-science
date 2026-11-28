@@ -39,7 +39,7 @@ describe('NotebookNetworkProtectionBanner', () => {
     await act(async () => root.render(<NotebookNetworkProtectionBanner onOpen={onOpen} />))
     await flush()
 
-    expect(container.querySelector('h3')?.textContent).toBe('Notebook network access')
+    expect(container.querySelector('h3')?.textContent).toBe('Agent & Notebook network')
     expect(container.textContent).toContain('Relaxed mode')
     expect(container.textContent).toContain('HTTPS domains connect directly')
     expect(container.textContent).toContain('0 saved addresses')
@@ -162,7 +162,7 @@ describe('NotebookNetworkProtectionBanner', () => {
     })
 
     expect(getStatus).toHaveBeenCalledTimes(2)
-    expect(container.textContent).toContain('Notebook network access')
+    expect(container.textContent).toContain('Agent & Notebook network')
     vi.useRealTimers()
   })
 })

@@ -12,7 +12,7 @@ for (const theme of ['Light', 'Dark'] as const) {
     const page = await app.configureFakeAgent()
     await setTheme(page, theme)
     const settings = await openSettingsPage(page, 'Network')
-    const entry = settings.getByRole('region', { name: 'Notebook network access', exact: true })
+    const entry = settings.getByRole('region', { name: 'Agent & Notebook network', exact: true })
     const manage = entry.getByRole('button', { name: 'Manage access', exact: true })
     await expect(entry.getByText('Relaxed mode', { exact: true })).toBeVisible()
     const relaxedColor = await entry
@@ -110,7 +110,7 @@ for (const theme of ['Light', 'Dark'] as const) {
       const protection = runtimes.getByTestId('notebook-network-protection-banner')
       await expect(
         protection.getByRole('heading', {
-          name: 'Notebook network access',
+          name: 'Agent & Notebook network',
           level: 3,
           exact: true
         })

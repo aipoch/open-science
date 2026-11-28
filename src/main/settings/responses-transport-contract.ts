@@ -11,6 +11,8 @@ import type { ChatSkillSelectorCandidate, ChatSkillSelectorInput } from './skill
 
 export type ResponsesToChatCompletionsBridgeTarget = {
   onProviderFailure?: ProviderFailureObserver
+  allowInsecureHttp?: boolean
+  isInsecureHttpAllowed?: (url: string) => Promise<boolean>
   baseUrl: string
   key?: string
   requestPolicy?: ProviderRequestPolicy

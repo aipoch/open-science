@@ -568,7 +568,7 @@ const NotebookNetworkApprovalDetail = ({
           {approval.reason ? <p>{t('Reason: {{reason}}', { reason: approval.reason })}</p> : null}
           <p>
             {t(
-              'This lets Notebook code read from and send data to {{domain}}. Only allow domains you trust. You can revoke saved access anytime in Settings > Network > Notebook network access.',
+              'This lets Notebook code read from and send data to {{domain}}. Only allow domains you trust. You can revoke saved access anytime in Settings > Network > Agent & Notebook network.',
               { domain: formatNetworkHostname(approval.hostname) }
             )}
           </p>

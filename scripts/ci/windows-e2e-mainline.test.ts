@@ -28,6 +28,7 @@ it.each([
   ['src/renderer/preview.tsx', ['files']],
   ['src/main/notebook/execute.ts', ['notebook']],
   ['src/main/windows.ts', ['windows']],
+  ['e2e/custom-provider-http.spec.ts', ['conversation']],
   ['docs/PRD.md', []]
 ])('selects only product mainlines affected by %s', (path, expected) => {
   expect(select(path).groups).toEqual(expected)
