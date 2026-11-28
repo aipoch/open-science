@@ -8,7 +8,7 @@ import {
   toAcpSessionAgentTarget,
   type SessionAgentTargetSource
 } from './session-agent-target'
-import { requiresTaskRunTracing, taskRunTracing } from './task-run-tracing'
+import { requiresTaskRunTracing, taskRunTraceMetadataOf, taskRunTracing } from './task-run-tracing'
 import { createAcpTaskAgentPort } from './task-agent-port'
 
 const taskProvenanceContext = (promptMessageId: string): AgentTurnProvenanceContext => ({
@@ -378,7 +378,8 @@ describe('ACP Task Agent port', () => {
         provenanceContext: taskProvenanceContext('prompt-1'),
         text: 'Research this.',
         permissionPrompts: 'none',
-        otelTraces: true
+        otelTraces: true,
+        traceMetadata: { experiment: 'baseline' }
       },
       { onPromptAdmitted, onProviderPromptAccepted }
     )
@@ -391,6 +392,8 @@ describe('ACP Task Agent port', () => {
     )
     const forwarded = sendPrompt.mock.calls[0][0]
     expect(forwarded).not.toHaveProperty('otelTraces')
+    expect(taskRunTraceMetadataOf(forwarded)).toEqual({ experiment: 'baseline' })
+    expect(taskRunTraceMetadataOf(structuredClone(forwarded))).toBeUndefined()
     expect(requiresTaskRunTracing(structuredClone(forwarded))).toBe(false)
     expect(onPromptAdmitted).toHaveBeenCalledOnce()
     expect(onProviderPromptAccepted).toHaveBeenCalledOnce()

@@ -1,4 +1,8 @@
-import { assertTaskRunTracingReady, requiresTaskRunTracing } from './task-run-tracing'
+import {
+  assertTaskRunTracingReady,
+  requiresTaskRunTracing,
+  taskRunTraceMetadataOf
+} from './task-run-tracing'
 import { SCHEDULE_TURN_META } from '../../shared/session-schedules'
 import { taskPromptOwnerOf } from '../../shared/task-continuation'
 import { SessionPromptAdmissionError } from './runtime-activity-port'
@@ -100,6 +104,7 @@ type AcpActivatedPromptTurn = Readonly<{
   request: AcpPromptRequest
   connectionGeneration: number
   traceThisRun: boolean
+  traceMetadata?: Readonly<Record<string, string>>
   mode: AcpPromptTurnMode
   session: ActiveSession
   interaction: AcpPromptSessionInteractionScope
@@ -635,6 +640,9 @@ class AcpPromptTurnWorkflow {
       {
         request: admittedRequest,
         traceThisRun,
+        ...(traceThisRun && taskRunTraceMetadataOf(request)
+          ? { traceMetadata: taskRunTraceMetadataOf(request) }
+          : {}),
         connectionGeneration: this.options.environment.connectionGeneration?.() ?? 0,
         mode,
         session: activeSession,
@@ -859,7 +867,10 @@ class AcpPromptTurnWorkflow {
           signal: interaction.signal,
           cancellationCheckpoint: () => this.checkpoint(interaction),
           ...(turn.traceThisRun
-            ? { authorizeHarnessTracing: true as const }
+            ? {
+                authorizeHarnessTracing: true as const,
+                ...(turn.traceMetadata ? { traceMetadata: turn.traceMetadata } : {})
+              }
             : frameworkId === 'open-science-agent' && resolveProjectTracing
               ? {
                   authorizeHarnessTracing: async (): Promise<boolean> => {

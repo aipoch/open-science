@@ -1,4 +1,4 @@
-import { taskRunTracing, requireTracingFramework } from './task-run-tracing'
+import { taskRunTraceMetadata, taskRunTracing, requireTracingFramework } from './task-run-tracing'
 import type {
   AcpCreateSessionResponse,
   AcpPromptRequest,
@@ -55,6 +55,9 @@ type SessionArchiveAvailability = {
 const toAcpPromptRequest = (request: TaskAgentPromptRequest): AcpPromptRequest => ({
   sessionId: request.sessionId,
   ...(request.otelTraces ? { [taskRunTracing]: true } : {}),
+  ...(request.otelTraces && request.traceMetadata
+    ? { [taskRunTraceMetadata]: request.traceMetadata }
+    : {}),
   text: request.text,
   ...(request.permissionPrompts ? { permissionPrompts: request.permissionPrompts } : {}),
   provenanceContext: request.provenanceContext,

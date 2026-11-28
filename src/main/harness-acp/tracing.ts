@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto'
 import type { AgentModel, AgentTool, ModelEvent, ModelUsage } from '@aipoch/agent-harness'
-import { HARNESS_USER_TEXT_RANGE } from './config'
+import { HARNESS_TRACE_METADATA, HARNESS_USER_TEXT_RANGE } from './config'
 import {
   MAX_REQUEST_BYTES,
   SERVICE_NAME,
@@ -10,6 +10,27 @@ import {
   type SpanContent,
   type TraceAttributes
 } from './trace-export'
+
+declare const __OPEN_SCIENCE_GIT_COMMIT__: string | undefined
+
+// Langfuse release label: "<app version>+<short commit>", or only the version without a commit.
+function traceRelease(): string | undefined {
+  const version = process.env.OPEN_SCIENCE_APPLICATION_VERSION
+  if (!version) return undefined
+  const commit = typeof __OPEN_SCIENCE_GIT_COMMIT__ === 'string' ? __OPEN_SCIENCE_GIT_COMMIT__ : ''
+  return commit ? `${version}+${commit}` : version
+}
+
+// Host-validated Run metadata becomes filterable Langfuse trace metadata. Revalidate defensively.
+function traceMetadataAttributes(prompt: readonly TextBlock[]): TraceAttributes {
+  const value = prompt[0]?._meta?.[HARNESS_TRACE_METADATA]
+  const attributes: TraceAttributes = {}
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return attributes
+  for (const [key, entry] of Object.entries(value).slice(0, 8))
+    if (/^[a-z][a-z0-9_]{0,31}$/.test(key) && typeof entry === 'string')
+      attributes[`langfuse.trace.metadata.${key}`] = entry.slice(0, 128)
+  return attributes
+}
 
 const MAX_TOOL_NAMES = 64
 const MAX_EXCERPT_LENGTH = 4_096
@@ -144,6 +165,7 @@ type Turn = {
   modelRequests: number
   compactionRequests: number
   toolExecutions: number
+  invalidToolArguments: number
   compactionRequestId?: string
 }
 
@@ -183,10 +205,13 @@ function traceSession(
         captureToolResults: capture.toolResults,
         modelRequests: 0,
         compactionRequests: 0,
-        toolExecutions: 0
+        toolExecutions: 0,
+        invalidToolArguments: 0
       }
       let input: Excerpt | undefined
+      let runAttributes: TraceAttributes = {}
       try {
+        runAttributes = { 'langfuse.release': traceRelease(), ...traceMetadataAttributes(prompt) }
         if (capture.excerpts) input = userPromptExcerpt(prompt)
       } catch {
         // An unreadable diagnostic value cannot stop a turn.
@@ -200,6 +225,7 @@ function traceSession(
           {
             ...sessionAttributes,
             ...modelAttributes,
+            ...runAttributes,
             'gen_ai.operation.name': 'invoke_agent',
             'gen_ai.agent.name': SERVICE_NAME,
             'harness.prompt.block_count': prompt.length,
@@ -207,7 +233,8 @@ function traceSession(
             'harness.reply.excerpt_truncated': turn.response?.truncated,
             'harness.request.count': requestCount ?? turn.modelRequests,
             'harness.compaction.request_count': turn.compactionRequests,
-            'harness.tool.execution_count': turn.toolExecutions
+            'harness.tool.execution_count': turn.toolExecutions,
+            'harness.tool.invalid_argument_count': turn.invalidToolArguments
           },
           { input: input?.text, output: turn.response?.text }
         )
@@ -322,6 +349,45 @@ function traceSession(
     wrapTool(tool) {
       return {
         ...tool,
+        validate(args) {
+          try {
+            return tool.validate(args)
+          } catch (error) {
+            // The harness reports this failure to the model without executing the tool.
+            const turn = active
+            if (turn) {
+              try {
+                turn.invalidToolArguments++
+                const span = startSpan('harness.tool', 1, turn.span)
+                const argumentCount =
+                  args && typeof args === 'object' && !Array.isArray(args)
+                    ? Object.keys(args).length
+                    : undefined
+                record(
+                  span,
+                  'invalid_arguments',
+                  {
+                    ...sessionAttributes,
+                    'gen_ai.operation.name': 'execute_tool',
+                    'gen_ai.tool.name': tool.name
+                  },
+                  {
+                    input: formatToolPreview(
+                      { tool: tool.name.slice(0, 256), argumentCount },
+                      span && turn.captureToolArguments && captureOptions()
+                        ? { field: 'arguments', value: args }
+                        : undefined
+                    ),
+                    output: formatToolPreview({ outcome: 'invalid_arguments' })
+                  }
+                )
+              } catch {
+                // Trace previews must not change the validation error.
+              }
+            }
+            throw error
+          }
+        },
         async execute(args, context) {
           const turn = active
           if (!turn) return tool.execute(args, context)

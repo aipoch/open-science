@@ -323,6 +323,11 @@ registerResource(
         'Export Open-Science Agent traces for this Run; supported on local durable submissions.'
       )
       .optional(),
+    traceMetadata: z
+      .record(z.string().regex(/^[a-z][a-z0-9_]{0,31}$/), z.string().max(128))
+      .refine((value) => Object.keys(value).length <= 8, 'Use at most 8 keys.')
+      .describe('Filterable trace metadata for this Run; requires otelTraces.')
+      .optional(),
     skillIds: z.array(id('Skill ID.')).optional(),
     specialist: id('Specialist ID or exact name for a new session.').optional(),
     turnIntent: z

@@ -161,6 +161,40 @@ describe('AcpProviderPromptExecutor', () => {
     expect(fixture.session.prompt).toHaveBeenCalledWith('prompt')
   })
 
+  it('forwards Run trace metadata only to an authorized built-in Agent prompt', async () => {
+    const traceMetadata = { experiment: 'baseline' }
+    const block = { type: 'text' as const, text: 'prompt' }
+    const stale = {
+      ...block,
+      _meta: { 'open-science-agent/trace-metadata': { forged: 'value' } }
+    }
+    const authorized = setup([stop({ stopReason: 'end_turn' })])
+    await authorized.executor.execute({
+      ...authorized.input,
+      frameworkId: 'open-science-agent',
+      content: [block],
+      authorizeHarnessTracing: true,
+      traceMetadata
+    })
+    expect(authorized.session.prompt).toHaveBeenCalledWith([
+      {
+        ...block,
+        _meta: {
+          'open-science-agent/trace-enabled': true,
+          'open-science-agent/trace-metadata': traceMetadata
+        }
+      }
+    ])
+    const denied = setup([stop({ stopReason: 'end_turn' })])
+    await denied.executor.execute({
+      ...denied.input,
+      frameworkId: 'open-science-agent',
+      content: [stale],
+      authorizeHarnessTracing: async () => false
+    })
+    expect(denied.session.prompt).toHaveBeenCalledWith([{ ...block, _meta: {} }])
+  })
+
   it.each(['deadline', 'abort'])('handles a stalled tracing lookup on %s', async (ending) => {
     const fixture = setup([stop({ stopReason: 'end_turn' })])
     const controller = new AbortController()

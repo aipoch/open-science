@@ -2331,6 +2331,60 @@ describe('task CLI', () => {
     }
   )
 
+  it('submits repeatable --trace-metadata with --otel-traces', async () => {
+    const submitRun = acceptedSubmission()
+    await runTaskCommand(
+      parseCliArgs([
+        'run',
+        '--project',
+        'project-1',
+        '--prompt',
+        'Trace',
+        '--otel-traces',
+        '--trace-metadata',
+        'experiment=baseline',
+        '--trace-metadata',
+        'trial=1',
+        '--trace-metadata',
+        'note=a=b',
+        '--json'
+      ]),
+      { connect: async () => ({ listProjects, submitRun }), log: vi.fn(), stdinIsTTY: true }
+    )
+    expect(submitRun).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({
+        otelTraces: true,
+        traceMetadata: { experiment: 'baseline', trial: '1', note: 'a=b' }
+      }),
+      { signal: undefined }
+    )
+  })
+
+  it('validates --trace-metadata conservatively', () => {
+    const base = ['run', '--project', 'p', '--prompt', 'x']
+    const parse = (...extra: string[]): unknown => parseCliArgs([...base, ...extra])
+    expect(() => parse('--trace-metadata', 'a=b')).toThrow('requires --otel-traces')
+    expect(() => parse('--otel-traces', '--trace-metadata', 'novalue')).toThrow('key=value')
+    expect(() => parse('--otel-traces', '--trace-metadata', '=v')).toThrow('key=value')
+    expect(() => parse('--otel-traces', '--trace-metadata', 'Bad-Key=v')).toThrow('must match')
+    expect(() => parse('--otel-traces', '--trace-metadata', `k=${'x'.repeat(129)}`)).toThrow(
+      'at most 128 characters'
+    )
+    expect(() =>
+      parse('--otel-traces', '--trace-metadata', 'a=1', '--trace-metadata', 'a=2')
+    ).toThrow('more than once')
+    expect(() =>
+      parse(
+        '--otel-traces',
+        ...Array.from({ length: 9 }, (_, index) => ['--trace-metadata', `k${index}=v`]).flat()
+      )
+    ).toThrow('at most 8')
+    expect(() => parseCliArgs(['run', 'status', 'r', '--trace-metadata', 'a=b'])).toThrow(
+      '--trace-metadata requires --otel-traces'
+    )
+  })
+
   it('limits --otel-traces to Run creation and avoids receipt lookup for unsupported hosts', async () => {
     for (const args of [
       ['run', 'status', 'r'],

@@ -2050,7 +2050,7 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
                     : []),
                   ...(options.tasks.listRuntimes ? ['list-runtimes'] : []),
                   ...(!externalAuthorization && options.tasks.supportsSubmissions?.()
-                    ? ['durable-submissions', 'run-otel-traces']
+                    ? ['durable-submissions', 'run-otel-traces', 'run-trace-metadata']
                     : [])
                 ]
               : []),

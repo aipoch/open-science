@@ -630,6 +630,15 @@ export class OpenScienceClient {
       )
     }
     if (
+      request.traceMetadata !== undefined &&
+      !bootstrap.taskCapabilities.includes('run-trace-metadata')
+    ) {
+      throw new OpenScienceApiError(
+        'This server does not support Run trace metadata. Update the server before submitting.',
+        { code: 'unsupported_capability' }
+      )
+    }
+    if (
       request.permissionPrompts === 'none' &&
       !bootstrap.taskCapabilities.includes('permission-prompts-none')
     ) {
@@ -749,7 +758,10 @@ export class OpenScienceClient {
 
   async startRun(request, options) {
     const deadline = Date.now() + resolveRequestTimeout(this.requestTimeoutMs, options?.timeoutMs)
-    if (request.otelTraces !== undefined && !options?.requestId) {
+    if (
+      (request.otelTraces !== undefined || request.traceMetadata !== undefined) &&
+      !options?.requestId
+    ) {
       throw new OpenScienceApiError(
         'Per-Run tracing requires a local durable submission with a requestId.',
         { code: 'invalid_request' }

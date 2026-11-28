@@ -186,6 +186,31 @@ describe('OpenScienceClient', () => {
     expect(fetch).not.toHaveBeenCalled()
   })
 
+  it('requires a server that supports Run trace metadata', async () => {
+    const fetch = vi.fn(async () =>
+      response(200, { taskCapabilities: ['durable-submissions', 'run-otel-traces'] })
+    )
+    const client = new OpenScienceClient({
+      baseUrl: 'http://127.0.0.1:44100',
+      token: 'test',
+      fetch
+    })
+    const input = {
+      project: 'project-1',
+      prompt: 'Trace',
+      otelTraces: true as const,
+      traceMetadata: { experiment: 'baseline' }
+    }
+    // @ts-expect-error Trace metadata is only valid with a durable requestId.
+    await expect(client.startRun(input)).rejects.toMatchObject({ code: 'invalid_request' })
+    expect(fetch).not.toHaveBeenCalled()
+    await expect(client.startRun(input, { requestId: 'trace-request' })).rejects.toMatchObject({
+      code: 'unsupported_capability',
+      message: expect.stringContaining('trace metadata')
+    })
+    expect(fetch).toHaveBeenCalledOnce()
+  })
+
   it.each([undefined, 'existing-runtime-request'])(
     'never submits an exact Notebook target to an older server (requestId=%s)',
     async (requestId) => {
