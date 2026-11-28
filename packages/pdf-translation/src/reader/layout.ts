@@ -11731,6 +11731,23 @@ function extractPage(
             item.x - line.items[index - 1].right >= -line.font * 0.05 &&
             item.x - line.items[index - 1].right < line.font * 0.8))
     )
+  // An indented first line can finish with a preposition before a figure or table reference.
+  const continuesIndentedReference = (block: Block, previous: Line, next: Line): boolean => {
+    if (block.lines.length !== 1 || next.x >= previous.x) return false
+    return (
+      previous.x - next.x < next.font * 3 &&
+      /\b(?:in|on|of|to|from|with|see)$/u.test(previous.text) &&
+      uninterruptedNativeRow(previous) &&
+      uninterruptedNativeRow(next) &&
+      next.items[0].nativeLine === previous.items.at(-1)!.nativeLine + 1 &&
+      [...previous.items, ...next.items].every(
+        (item) =>
+          item.fontName &&
+          item.fontName === previous.items[0].fontName &&
+          Math.abs(item.font - next.font) < next.font * 0.05
+      )
+    )
+  }
   // A preceding list marker on the same rail identifies this equation as inline prose.
   const hasLabeledInlineCondition = (line: Line): boolean => {
     const match = /^([A-Z])([2-9]|[1-9]\d) For [a-z] = [a-z], (?:the|a) [a-z]/u.exec(line.text)
@@ -22822,35 +22839,30 @@ function extractPage(
               row.baseline < page.height * 0.35 &&
               (/^(?:[A-Z][A-Za-z'.-]*\s+){1,4}[A-Z][A-Za-z'.-]*[∗*†‡]+$/u.test(row.text.trim()) ||
                 standaloneContactLine.test(row.text.trim()))
-          ) ||
-          (captionLabel.test(line.text) &&
-            // A body sentence can wrap immediately before "Figure 1.".
-            // Full-width, unfinished prose with native adjacency is a reference.
-            !(
-              captionReferenceContinuation ||
-              scientificCaptionReference ||
-              (!isPdfTranslationCaption(b.source) &&
-                last.text.length > 40 &&
-                !terminal(last.text) &&
-                gap < line.font * 1.7 &&
-                (Math.abs(line.x - b.x) < line.font * 0.45 ||
-                  (b.lines.length === 1 &&
-                    line.x < last.x &&
-                    last.x - line.x < line.font * 3 &&
-                    /\b(?:in|on|of|to|from|with|see)$/u.test(last.text) &&
-                    uninterruptedNativeRow(last) &&
-                    uninterruptedNativeRow(line) &&
-                    line.items[0].nativeLine === last.items.at(-1)!.nativeLine + 1 &&
-                    [...last.items, ...line.items].every(
-                      (item) =>
-                        item.fontName &&
-                        item.fontName === last.items[0].fontName &&
-                        Math.abs(item.font - line.font) < line.font * 0.05
-                    ))) &&
-                Math.abs(last.right - b.right) < line.font &&
-                lastNativeIndex < nextNativeIndex &&
-                !all.some((item) => item.index > lastNativeIndex && item.index < nextNativeIndex))
-            )) ||
+          )
+        )
+          return false
+
+        if (
+          captionLabel.test(line.text) &&
+          !captionReferenceContinuation &&
+          !scientificCaptionReference
+        ) {
+          // A label at the start of the next row can complete an unfinished body sentence.
+          const continuesBodyReference =
+            !isPdfTranslationCaption(b.source) &&
+            last.text.length > 40 &&
+            !terminal(last.text) &&
+            gap < line.font * 1.7 &&
+            (Math.abs(line.x - b.x) < line.font * 0.45 ||
+              continuesIndentedReference(b, last, line)) &&
+            Math.abs(last.right - b.right) < line.font &&
+            lastNativeIndex < nextNativeIndex &&
+            !all.some((item) => item.index > lastNativeIndex && item.index < nextNativeIndex)
+          if (!continuesBodyReference) return false
+        }
+
+        if (
           // A native algorithm title and its independently printed Require
           // label are different owners. Retain that boundary before a complete
           // algorithm proof decides whether the body is source-only.
@@ -22877,7 +22889,11 @@ function extractPage(
           // to the next annotation moves comments away from their formulas.
           [line, last].some(
             (candidate) => formulaTails.has(candidate) && /^\([^]*\)$/u.test(candidate.text)
-          ) ||
+          )
+        )
+          return false
+
+        if (
           (/\bet al\.$/u.test(last.text) &&
             /^\[\d{1,3}\]\s+\p{Ll}/u.test(line.text) &&
             !citationContinuation) ||
@@ -22891,25 +22907,29 @@ function extractPage(
           (labelStarts.has(line) &&
             (adjacentFields ||
               terminal(last.text) ||
-              line.items[0].str.trim() === last.items[0].str.trim())) ||
-          (numbered.has(line) &&
-            !continuedEnumerationRows.has(line) &&
-            !literalNumberContinuation &&
-            !modulusNumberContinuation &&
-            !fundingCodeTail &&
-            !citationContinuation &&
-            !sampleCountContinuation &&
-            !modelIdentifierContinuation &&
-            !witnessedIdentifierWrap(last, line, b) &&
-            // A wrapped caption can finish a numeric parameter before starting
-            // its next sentence; "128. Values ..." is not a new list item.
-            !(
-              isPdfTranslationCaption(b.source) &&
-              !terminal(last.text) &&
-              gap < line.font * 1.7 &&
-              /^\d{1,3}\.\s+\p{Lu}/u.test(line.text) &&
-              Math.abs(line.x - b.x) < line.font * 0.45
-            ))
+              line.items[0].str.trim() === last.items[0].str.trim()))
+        )
+          return false
+
+        if (
+          numbered.has(line) &&
+          !continuedEnumerationRows.has(line) &&
+          !literalNumberContinuation &&
+          !modulusNumberContinuation &&
+          !fundingCodeTail &&
+          !citationContinuation &&
+          !sampleCountContinuation &&
+          !modelIdentifierContinuation &&
+          !witnessedIdentifierWrap(last, line, b) &&
+          // A wrapped caption can finish a numeric parameter before starting
+          // its next sentence; "128. Values ..." is not a new list item.
+          !(
+            isPdfTranslationCaption(b.source) &&
+            !terminal(last.text) &&
+            gap < line.font * 1.7 &&
+            /^\d{1,3}\.\s+\p{Lu}/u.test(line.text) &&
+            Math.abs(line.x - b.x) < line.font * 0.45
+          )
         )
           return false
         // Infer paragraph spacing from repeated body wraps, rather than the

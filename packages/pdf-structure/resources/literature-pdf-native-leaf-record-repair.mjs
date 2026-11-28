@@ -83,27 +83,25 @@ function nativeWholeOwnerSourcePacket(table, items, rules, context) {
     seen.delete(value)
     return true
   }
+  if (!table || !data(table) || !fencedGroupValidRect(table.cropRect)) return
+  if (!Array.isArray(table.grid) || !table.grid.length || !Array.isArray(table.cells)) return
   if (
-    !table ||
-    !data(table) ||
-    !fencedGroupValidRect(table.cropRect) ||
-    !Array.isArray(table.grid) ||
-    !table.grid.length ||
-    !Array.isArray(table.cells) ||
     !Number.isInteger(table.page) ||
     table.page < 1 ||
     !context?.viewport ||
     ['width', 'height', 'scale'].some((k) => table.sourceViewport?.[k] !== context.viewport[k]) ||
-    (table.readingRotation !== undefined && table.readingRotation !== 0) ||
+    (table.readingRotation !== undefined && table.readingRotation !== 0)
+  )
+    return
+  if (
     table.captionIssue !== undefined ||
     ['parts', 'unassigned', 'notes'].some(
       (k) => table[k] !== undefined && (!Array.isArray(table[k]) || table[k].length)
     ) ||
-    (table.clipped !== undefined && !Array.isArray(table.clipped)) ||
-    !Array.isArray(items) ||
-    !Array.isArray(rules)
+    (table.clipped !== undefined && !Array.isArray(table.clipped))
   )
     return
+  if (!Array.isArray(items) || !Array.isArray(rules)) return
   const fonts = items.filter(
       (i) => fencedGroupFiniteFont(i) && fencedGroupIntersects(i.rect, table.cropRect)
     ),
@@ -124,58 +122,12 @@ function nativeWholeOwnerSourcePacket(table, items, rules, context) {
     return
   const owners = new Map(),
     claimed = new Set(),
-    slots = new Set(),
-    chars = (text) => [...text.normalize('NFKC').replace(/\s/gu, '')].sort().join('')
-  for (const c of table.cells) {
-    if (
-      !c ||
-      ![c.row, c.column, c.rowSpan, c.colSpan].every(Number.isInteger) ||
-      c.row < 0 ||
-      c.column < 0 ||
-      c.rowSpan < 1 ||
-      c.colSpan < 1 ||
-      c.row + c.rowSpan > table.grid.length ||
-      c.column + c.colSpan > columns ||
-      typeof c.text !== 'string' ||
-      table.grid[c.row][c.column] !== c.text ||
-      (c.sourceRects !== undefined && !Array.isArray(c.sourceRects))
-    )
-      return
-    for (let r = c.row; r < c.row + c.rowSpan; r++)
-      for (let col = c.column; col < c.column + c.colSpan; col++) {
-        const key = `${r}:${col}`
-        if (slots.has(key) || ((r !== c.row || col !== c.column) && table.grid[r][col] !== ''))
-          return
-        slots.add(key)
-      }
-    const refs = c.sourceTokens ?? c.sourceItems ?? [],
-      rects = c.sourceRects ?? []
-    if (!Array.isArray(refs) || refs.length !== rects.length) return
-    const owned = []
-    for (let n = 0; n < refs.length; n++) {
-      const ref = refs[n],
-        matches = fonts.filter((f) =>
-          c.sourceTokens
-            ? !ref?.sourceToken && fencedGroupSameFont(f, ref)
-            : fencedGroupOpaqueEqual(f.sourceItem, ref)
-        )
-      if (
-        matches.length !== 1 ||
-        claimed.has(matches[0]) ||
-        (!c.sourceTokens && !fencedGroupExactRect(rects[n], matches[0].rect))
-      )
-        return
-      claimed.add(matches[0])
-      owned.push(matches[0])
-    }
-    if (
-      chars(c.text) !== chars(owned.map((f) => f.text).join('')) ||
-      rects.some((r) => owned.filter((f) => fencedGroupExactRect(r, f.rect)).length !== 1) ||
-      owned.some((f) => rects.filter((r) => fencedGroupExactRect(r, f.rect)).length !== 1) ||
-      (c.sourceItems && !fencedGroupOpaqueEqual(c.sourceItems, nativeWholeFontOrigins(owned)))
-    )
-      return
-    owners.set(c, owned)
+    slots = new Set()
+  for (const cell of table.cells) {
+    if (!claimWholeOwnerSlots(cell, table.grid, columns, slots)) return
+    const owned = claimWholeOwnerFonts(cell, fonts, claimed)
+    if (!owned) return
+    owners.set(cell, owned)
   }
   if (
     slots.size !== columns * table.grid.length ||
@@ -187,6 +139,56 @@ function nativeWholeOwnerSourcePacket(table, items, rules, context) {
   )
     return
   return { fonts, owners, height: Math.max(...fonts.map((f) => f.height)), columns }
+}
+
+function claimWholeOwnerSlots(cell, grid, columns, slots) {
+  if (!cell || ![cell.row, cell.column, cell.rowSpan, cell.colSpan].every(Number.isInteger))
+    return false
+  if (cell.row < 0 || cell.rowSpan < 1 || cell.row + cell.rowSpan > grid.length) return false
+  if (cell.column < 0 || cell.colSpan < 1 || cell.column + cell.colSpan > columns) return false
+  if (typeof cell.text !== 'string' || grid[cell.row][cell.column] !== cell.text) return false
+  for (let row = cell.row; row < cell.row + cell.rowSpan; row++) {
+    for (let col = cell.column; col < cell.column + cell.colSpan; col++) {
+      const key = `${row}:${col}`
+      if (slots.has(key) || ((row !== cell.row || col !== cell.column) && grid[row][col] !== ''))
+        return false
+      slots.add(key)
+    }
+  }
+  return true
+}
+
+function claimWholeOwnerFonts(cell, fonts, claimed) {
+  if (cell.sourceRects !== undefined && !Array.isArray(cell.sourceRects)) return
+  const refs = cell.sourceTokens ?? cell.sourceItems ?? [],
+    rects = cell.sourceRects ?? []
+  if (!Array.isArray(refs) || refs.length !== rects.length) return
+  const owned = []
+  for (let n = 0; n < refs.length; n++) {
+    const ref = refs[n],
+      matches = fonts.filter((f) =>
+        cell.sourceTokens
+          ? !ref?.sourceToken && fencedGroupSameFont(f, ref)
+          : fencedGroupOpaqueEqual(f.sourceItem, ref)
+      )
+    if (
+      matches.length !== 1 ||
+      claimed.has(matches[0]) ||
+      (!cell.sourceTokens && !fencedGroupExactRect(rects[n], matches[0].rect))
+    )
+      return
+    claimed.add(matches[0])
+    owned.push(matches[0])
+  }
+  const chars = (text) => [...text.normalize('NFKC').replace(/\s/gu, '')].sort().join('')
+  if (
+    chars(cell.text) !== chars(owned.map((f) => f.text).join('')) ||
+    rects.some((r) => owned.filter((f) => fencedGroupExactRect(r, f.rect)).length !== 1) ||
+    owned.some((f) => rects.filter((r) => fencedGroupExactRect(r, f.rect)).length !== 1) ||
+    (cell.sourceItems && !fencedGroupOpaqueEqual(cell.sourceItems, nativeWholeFontOrigins(owned)))
+  )
+    return
+  return owned
 }
 
 // Keep opaque donor payloads. Split only plain, whole source programs; rich
