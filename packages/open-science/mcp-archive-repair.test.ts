@@ -50,7 +50,7 @@ describe('standalone archive detection', () => {
   })
 })
 
-it('installs a verified complete archive beside the old tree before reporting MCP recovery', async () => {
+it('installs a verified archive beside the old tree despite an active MCP node process', async () => {
   const root = await mkdtemp(join(tmpdir(), 'open-science-archive-repair-success-'))
   roots.push(root)
   const archive = join(root, 'open-science-cli-1.3.2-win32-x64')
@@ -108,7 +108,17 @@ it('installs a verified complete archive beside the old tree before reporting MC
     toolCount: 28
   })
   const profile = join(root, 'profile')
-  await writeFile(profile, 'profile marker')
+  await mkdir(join(profile, 'runtime', 'mcp-groups'), { recursive: true })
+  await writeFile(
+    join(profile, 'runtime', 'mcp-groups', 'research-active.json'),
+    JSON.stringify({
+      group: 'research',
+      profile,
+      pid: process.pid,
+      lastSeenAt: new Date().toISOString()
+    })
+  )
+  await writeFile(join(profile, 'marker'), 'profile marker')
 
   const result = await repairStandaloneMcp({
     profile,
@@ -139,7 +149,7 @@ it('installs a verified complete archive beside the old tree before reporting MC
   expect(verifyMcp).toHaveBeenCalledExactlyOnceWith(
     expect.objectContaining({ profile, platform: 'win32', arch: 'x64' })
   )
-  expect(await readFile(profile, 'utf8')).toBe('profile marker')
+  expect(await readFile(join(profile, 'marker'), 'utf8')).toBe('profile marker')
   expect(await readFile(join(archive, 'release.json'), 'utf8')).toContain('1.3.2')
 })
 

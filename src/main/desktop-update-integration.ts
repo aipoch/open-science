@@ -68,12 +68,11 @@ export function createDesktopUpdateIntegration(options: {
   client(): DesktopRuntimeClient
   currentVersion: string
   allowedProcessIds(): number[]
-  // Only while the backend is running: its owned children must pass admission so the cleanup gate
-  // can stop them. Handoff/recovery after stop deliberately receive no such exemption.
-  ownedRuntimeProcessIds?(client: DesktopRuntimeClient, signal?: AbortSignal): Promise<number[]>
+  // NSIS handles live file locks after Desktop has saved its state and stopped its runtime.
+  installerHandlesOccupancy?: boolean
   verifyArtifact(status: UpdateStatus, signal?: AbortSignal): Promise<InstallationManifest>
   // True when the downloaded channel lacks supervised-replacement acceptance. Such installs keep
-  // the pre-supervision electron-updater handoff behind the same runtime stop and occupancy checks.
+  // the electron-updater handoff after the runtime stop.
   legacyInstall?(status: UpdateStatus): boolean
   preparedDebGate?(): DebSystemdGate | undefined
   verifyInstallerReady?(): Promise<void>
@@ -107,38 +106,6 @@ export function createDesktopUpdateIntegration(options: {
     if (cancelRequested)
       throw new UpdateLifecycleError('user-cancelled', 'Installation was cancelled before handoff.')
   }
-  const preparingProcessIds = async (
-    client: DesktopRuntimeClient,
-    signal: AbortSignal
-  ): Promise<number[]> => {
-    try {
-      return [
-        ...options.allowedProcessIds(),
-        ...(options.ownedRuntimeProcessIds
-          ? await boundedRead(
-              (readSignal) => options.ownedRuntimeProcessIds!(client, readSignal),
-              signal
-            )
-          : [])
-      ]
-    } catch (cause) {
-      signal.throwIfAborted()
-      throw new UpdateLifecycleError(
-        'installation-busy',
-        'Application process ownership could not be verified.',
-        {
-          phase: 'preparing',
-          runtime: 'running',
-          installation: 'unchanged',
-          canCancel: true,
-          canRecover: false,
-          canRetryInstall: false,
-          detail: 'occupancy-unknown'
-        },
-        { cause }
-      )
-    }
-  }
   let pendingRestart:
     | {
         config: RuntimeStartupOptions
@@ -162,6 +129,7 @@ export function createDesktopUpdateIntegration(options: {
         ? legacyStoppedRecovery()
         : undefined
   const inspectStoppedLegacyInstallation = async (signal: AbortSignal): Promise<void> => {
+    if (options.installerHandlesOccupancy) return
     try {
       // The exited Runtime and its remaining helpers no longer receive an occupancy exemption.
       await inspectInstallationAvailability(
@@ -537,19 +505,19 @@ export function createDesktopUpdateIntegration(options: {
           }
         })
         if (options.legacyInstall?.(status)) {
-          // Same occupancy proof as a supervised install: never replace files another runtime uses.
-          await inspectInstallationAvailability(
-            {
-              ...options.location,
-              runtime: {
-                pid: client.processId(),
-                generation: info.generation,
-                configRoot: info.startupOptions.configRoot
+          if (!options.installerHandlesOccupancy)
+            await inspectInstallationAvailability(
+              {
+                ...options.location,
+                runtime: {
+                  pid: client.processId(),
+                  generation: info.generation,
+                  configRoot: info.startupOptions.configRoot
+                },
+                allowedProcessIds: options.allowedProcessIds
               },
-              allowedProcessIds: () => preparingProcessIds(client, cancellation.signal)
-            },
-            cancellation.signal
-          )
+              cancellation.signal
+            )
           checkCancellation()
           legacy = { config: info.startupOptions, stopped: false }
           return undefined
@@ -569,7 +537,7 @@ export function createDesktopUpdateIntegration(options: {
               configRoot: info.startupOptions.configRoot
             },
             startupOptions: info.startupOptions,
-            allowedProcessIds: () => preparingProcessIds(client, cancellation.signal)
+            allowedProcessIds: options.allowedProcessIds
           },
           cancellation.signal
         )
@@ -828,18 +796,19 @@ export function createDesktopUpdateIntegration(options: {
               'The confirmed service changed; cancel this update before checking a replacement service.'
             )
           options.validateConfiguration(info.startupOptions)
-          await inspectInstallationAvailability(
-            {
-              ...options.location,
-              runtime: {
-                pid: client.processId(),
-                generation: info.generation,
-                configRoot: info.startupOptions.configRoot
+          if (!options.installerHandlesOccupancy)
+            await inspectInstallationAvailability(
+              {
+                ...options.location,
+                runtime: {
+                  pid: client.processId(),
+                  generation: info.generation,
+                  configRoot: info.startupOptions.configRoot
+                },
+                allowedProcessIds: options.allowedProcessIds
               },
-              allowedProcessIds: () => preparingProcessIds(client, checking)
-            },
-            checking
-          )
+              checking
+            )
           const current = (await boundedRead(
             (readSignal) => client.invokeHost('desktop:update-inspect', [], readSignal),
             checking
