@@ -104,8 +104,7 @@ import {
   type AcpListener,
   WEB,
   RUNTIME_VALIDATED,
-  EVENT,
-  LOCAL
+  EVENT
 } from './definition'
 
 export const officePreviewAttachFrameContracts = {
@@ -298,19 +297,13 @@ export const pdfAnnotationsListContracts = {
 export const pdfStructureReadCachedContracts = {
   'pdfStructure.readCached': callable<
     (request: ReadCachedPdfStructureRequest) => Promise<PdfStructureResult | undefined>
-  >()('pdf-structure', [
-    'pdf-structure:read-cached',
-    LOCAL,
-    undefined,
-    undefined,
-    RUNTIME_VALIDATED
-  ]),
+  >()('pdf-structure', ['pdf-structure:read-cached', WEB, undefined, undefined, RUNTIME_VALIDATED]),
   'pdfStructure.parse': callable<
     (request: ParsePdfStructureRequest) => Promise<PdfStructureResult>
-  >()('pdf-structure', ['pdf-structure:parse', LOCAL, undefined, undefined, RUNTIME_VALIDATED]),
+  >()('pdf-structure', ['pdf-structure:parse', WEB, undefined, undefined, RUNTIME_VALIDATED]),
   'pdfStructure.cancel': callable<(requestId: string) => Promise<void>>()('pdf-structure', [
     'pdf-structure:cancel',
-    LOCAL,
+    WEB,
     undefined,
     undefined,
     RUNTIME_VALIDATED
@@ -319,18 +312,12 @@ export const pdfStructureReadCachedContracts = {
     (request: ReadPdfStructureThumbnailRequest) => Promise<string | undefined>
   >()('pdf-structure', [
     'pdf-structure:read-thumbnail',
-    LOCAL,
+    WEB,
     undefined,
     undefined,
     RUNTIME_VALIDATED
   ]),
   'pdfStructure.clearCache': callable<
     () => Promise<{ removedBytes: number; retainedEntries: number }>
-  >()('pdf-structure', [
-    'pdf-structure:clear-cache',
-    LOCAL,
-    undefined,
-    undefined,
-    RUNTIME_VALIDATED
-  ])
+  >()('pdf-structure', ['pdf-structure:clear-cache', WEB, undefined, undefined, RUNTIME_VALIDATED])
 } as const

@@ -22,13 +22,8 @@ const sourceOf = (request: ReadCachedPdfStructureRequest): PdfStructureSourceReq
     : { kind: 'literature', attachmentVersionId: request.attachmentVersionId }
 
 const authorize = (caller: CallerContext, lease: ApplicationCallerLease): void => {
-  if (
-    caller.location !== 'local' ||
-    !caller.isAuthorizationCurrent() ||
-    !lease.isCurrent() ||
-    lease.signal.aborted
-  )
-    throw new Error('Local PDF access is unavailable.')
+  if (!caller.isAuthorizationCurrent() || !lease.isCurrent() || lease.signal.aborted)
+    throw new Error('PDF access is unavailable.')
 }
 
 export class PdfStructureReader {
