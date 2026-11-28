@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 // Only the Agent's choices are deterministic. Input materialization, Python execution,
 // Notebook history and artifact publication cross the production MCP boundaries.
-export const researchPrompt = 'Analyze the attached measurements and save a research report.'
+export const researchPrompt = 'Plot the attached measurements as a bar chart.'
 
 export async function runResearchAnalysis(sessionId, prompt, withMcpClient, toolResult) {
   const inputBlock = prompt.match(
@@ -35,15 +35,20 @@ export async function runResearchAnalysis(sessionId, prompt, withMcpClient, tool
           name: 'notebook_execute',
           arguments: {
             language: 'python',
-            code: [
-              'import csv, statistics',
-              'from pathlib import Path',
-              `with open(${JSON.stringify(input.notebookPath)}, newline='', encoding='utf-8') as source:`,
-              "    measurements = [float(row['value']) for row in csv.DictReader(source)]",
-              "report = f'# Research results\\n\\nSamples: {len(measurements)}\\n\\nMean: {statistics.mean(measurements):.2f}\\n'",
-              "Path('research-results.md').write_text(report, encoding='utf-8')",
-              'print(report)'
-            ].join('\n')
+            code: `import csv
+import xml.etree.ElementTree as ET
+
+with open(${JSON.stringify(input.notebookPath)}, newline='', encoding='utf-8') as source:
+    samples = list(csv.DictReader(source))
+
+chart = ET.Element('svg', xmlns='http://www.w3.org/2000/svg', width='300', height=str(40 * len(samples)))
+for index, sample in enumerate(samples):
+    row = ET.SubElement(chart, 'g', transform=f'translate(0 {40 * index})')
+    ET.SubElement(row, 'text', x='8', y='27').text = sample['sample']
+    width = int(sample['value']) * 30
+    ET.SubElement(row, 'rect', x='38', y='8', width=str(width), height='26', fill='teal')
+    ET.SubElement(row, 'text', x=str(46 + width), y='27').text = sample['value']
+ET.ElementTree(chart).write('measurements.svg', encoding='utf-8')`
           }
         },
         undefined,
@@ -59,15 +64,15 @@ export async function runResearchAnalysis(sessionId, prompt, withMcpClient, tool
       await client.callTool({
         name: 'write_artifact_file',
         arguments: {
-          filename: 'research-results.md',
-          mimeType: 'text/markdown',
-          source: { kind: 'localPath', path: 'research-results.md' },
+          filename: 'measurements.svg',
+          mimeType: 'image/svg+xml',
+          source: { kind: 'localPath', path: 'measurements.svg' },
           producerRunId: execution.runId
         }
       })
     )
   )
-  if (stored.artifact?.producer_run_id !== execution.runId)
-    throw new Error('The research report lost its Notebook producer.')
-  return `Research analysis complete.\n\n${execution.stdout}`
+  if (!stored.artifact?.version_id || stored.artifact.producer_run_id !== execution.runId)
+    throw new Error('The chart was not published as a version of the producing Notebook run.')
+  return 'Measurement chart published.'
 }

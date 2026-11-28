@@ -297,7 +297,7 @@ it('discovers the reviewed mainline subset and retains every other case in the f
       'workspace-files.spec.ts: edits uploaded Markdown versions and keeps diff navigation coherent'
     ],
     notebook: [
-      'electron-foundation.spec.ts: analyzes uploaded data in Python and reopens the saved research'
+      'electron-foundation.spec.ts: plots uploaded measurements in Python and reopens the published chart'
     ],
     windows: [
       'windows-window-system.spec.ts: persists minimize-to-tray across titlebar close, relaunch, and Ctrl+W'

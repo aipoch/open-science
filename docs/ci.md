@@ -82,18 +82,20 @@ tests of each changed path that has its own bounded selection. A rename joins on
 are bounded and selects both owners; deleted, type-changed, unmerged, unowned and global paths add
 no floor.
 See [Package workflows](package-workflows.md) for selection details.
-Desktop changes run the Windows
-mainline E2E journeys on one test runner, selected from the changed modules and their declared
-consumers: projects/sessions, conversation/approval, files/previews, Notebook analysis, and native
-Windows behavior. The Notebook journey uploads CSV data, runs real Python through the Agent/MCP
-path, previews the generated report, and resumes the saved research after relaunch. Only the Agent
-responses are deterministic; computation and persistence use the production application.
-Keep one reviewed `@pr-mainline-<group>` representative per group: project creation/relaunch,
-Agent Allow/Deny, uploaded Markdown editing/preview, real Python analysis/resumption, and
-Windows tray/second-launch lifecycle. New cases and additional variants stay untagged in
-complete scheduled/manual regression; adding a mainline tag requires CI policy review.
-The discovery guard asserts these five exact test identities to prevent silent growth.
-PR Windows E2E installs, builds and runs on one runner; the six-runner scheduled regression
+Desktop changes select Windows mainline E2E groups from the changed modules and their declared
+consumers. Each selected group runs its tagged cases on a Windows runner.
+
+| Mainline group   | Reviewed desktop cases                                                                                                                                                                                                                                                                                          |
+| ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Projects (1)     | Create a project and find it in the home catalog after relaunch.                                                                                                                                                                                                                                                |
+| Conversation (6) | Grant HTTP provider access on save. Start a clean draft after a blocked first message. Restore a blocked conversation and reauthorize after restart. Show the denial when switching an existing conversation to an untrusted HTTP provider. Reopen an expanded table. Allow and deny Agent permission requests. |
+| Files (2)        | Edit an uploaded Markdown file and navigate its version diffs. Replace a published Markdown head and retain edits, restoration and drafts.                                                                                                                                                                      |
+| Notebook (1)     | Attach a CSV in a new project, plot its measurements in real Python, publish the chart as an Artifact Version and open it from the conversation. Reopen the chart after relaunch. Only the Agent's choices are scripted.                                                                                        |
+| Windows (1)      | Persist minimize-to-tray behavior across titlebar close, relaunch and Ctrl+W.                                                                                                                                                                                                                                   |
+
+The [discovery guard](../scripts/ci/windows-e2e-regression.test.ts) checks the exact test identities.
+New cases and additional variants stay untagged in complete scheduled/manual regression;
+adding a mainline tag requires CI policy review. The six-runner scheduled regression
 retains its shared setup snapshot. Selection uses the trusted base module owners and consumer graph and explains every chosen group
 in the preflight summary. Unknown/shared/build changes select all mainline groups, never complete
 E2E suites. Windows core checks remain blocking when selected. The trusted selector uses the existing module

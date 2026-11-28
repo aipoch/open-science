@@ -9,11 +9,11 @@ import { homeNewProjectButton } from './fixtures/project'
 
 const PROJECT_NAME = 'Electron E2E project'
 
-test('analyzes uploaded data in Python and reopens the saved research @pr-mainline-notebook', async ({
+test('plots uploaded measurements in Python and reopens the published chart @pr-mainline-notebook', async ({
   app
 }, testInfo) => {
   test.setTimeout(process.platform === 'win32' ? 360_000 : 180_000)
-  const prompt = 'Analyze the attached measurements and save a research report.'
+  const prompt = 'Plot the attached measurements as a bar chart.'
   const pythonPath = execFileSync(
     process.platform === 'win32' ? 'python' : 'python3',
     ['-c', 'import sys; print(sys.executable)'],
@@ -65,26 +65,57 @@ test('analyzes uploaded data in Python and reopens the saved research @pr-mainli
       await sendPrompt(
         page,
         prompt,
-        'Research analysis complete.',
+        'Measurement chart published.',
         process.platform === 'win32' ? 180_000 : 100_000
       )
-      await expect(page.getByRole('region', { name: 'Conversation' })).toContainText('Mean: 4.00')
       await expect.poll(() => page.evaluate(() => window.api.storage.detectActive())).toEqual([])
 
-      const reviewResult = async (): Promise<void> => {
+      const openChart = async (): Promise<string> => {
         await page
           .getByRole('region', { name: 'Conversation' })
-          .getByRole('button', { name: 'Preview generated file research-results.md', exact: true })
+          .getByRole('button', { name: 'Preview generated file measurements.svg', exact: true })
           .click()
         const preview = page.getByRole('tabpanel').filter({
-          has: page.getByRole('button', { name: 'Close preview of research-results.md' })
+          has: page.getByRole('button', { name: 'Close preview of measurements.svg' })
         })
-        await expect(preview).toContainText('Samples: 3')
-        await expect(preview).toContainText('Mean: 4.00')
-        await page.screenshot({ path: testInfo.outputPath('research-results.png') })
-        await preview.getByRole('button', { name: 'Close preview of research-results.md' }).click()
+        const image = preview.getByRole('img', { name: 'measurements.svg', exact: true })
+        await expect(image).toBeVisible()
+        await image.evaluate((element: HTMLImageElement) => element.decode())
+        const { bars, versionId } = await page.evaluate(async (prompt) => {
+          const { sessions } = await window.api.sessions.loadAll()
+          const session = sessions.find((entry) =>
+            entry.messages.some((message) => message.role === 'user' && message.content === prompt)
+          )
+          const artifact = session?.artifacts?.find((entry) => entry.name === 'measurements.svg')
+          if (!session || !artifact?.versionId)
+            throw new Error('The published chart version is missing.')
+          const { content } = await window.api.artifacts.readPreview({
+            projectId: session.projectId,
+            sessionId: session.id,
+            fileId: artifact.artifactId,
+            versionId: artifact.versionId,
+            path: artifact.path,
+            encoding: 'utf8'
+          })
+          const chart = new DOMParser().parseFromString(content, 'image/svg+xml')
+          const bars = Array.from(chart.querySelectorAll('g'), (row) => ({
+            sample: row.querySelector('text')?.textContent,
+            width: row.querySelector('rect')?.getAttribute('width')
+          }))
+          return { bars, versionId: artifact.versionId }
+        }, prompt)
+        expect(bars).toEqual([
+          { sample: 'A', width: '60' },
+          { sample: 'B', width: '120' },
+          { sample: 'C', width: '180' }
+        ])
+        return versionId
       }
-      await reviewResult()
+      const publishedVersion = await openChart()
+      await page
+        .getByRole('tabpanel')
+        .getByRole('button', { name: 'Close preview of measurements.svg' })
+        .click()
       if (process.platform === 'win32') {
         await testInfo.attach('research-before-restart', {
           path: await app.captureMainLog('research-before-restart.log'),
@@ -93,11 +124,8 @@ test('analyzes uploaded data in Python and reopens the saved research @pr-mainli
       }
       page = await app.restart()
       await openRecentSession(page, prompt)
-      await expect(page.getByRole('region', { name: 'Conversation' })).toContainText(
-        'Research analysis complete.'
-      )
-      await reviewResult()
-      await sendPrompt(page, 'Continue this research.', 'Deterministic reply:')
+      expect(await openChart()).toBe(publishedVersion)
+      await page.screenshot({ path: testInfo.outputPath('measurement-chart.png') })
     },
     async () => {
       try {
