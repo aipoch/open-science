@@ -22,9 +22,11 @@ const pixels = (canvas: Locator): Promise<string> =>
   })
 
 const waitForCardTransitions = (card: Locator): Promise<void> =>
-  card.evaluate(async (element) => {
-    const transitions = element
-      .getAnimations({ subtree: true })
+  card.evaluate(async () => {
+    // Document scope includes the card's pseudo-element overlays, which are not returned by
+    // Element.getAnimations({ subtree: true }) on the Windows compositor.
+    const transitions = document
+      .getAnimations()
       .filter(
         (animation) =>
           animation instanceof CSSTransition &&
