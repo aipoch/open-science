@@ -2,7 +2,16 @@ import { mkdir, mkdtemp, readFile, rename, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { expect, it, vi } from 'vitest'
+import {
+  CHILD_UNCONFIRMED,
+  DEFAULT_PY_ENV,
+  envPrefix,
+  operationJournalPath,
+  retainEnvironmentChildCleanup,
+  RuntimeOperationJournal
+} from '@aipoch/environment'
 import { NotebookRuntimeService } from './runtime-service'
+import { getRuntimeRoot } from './repository'
 import { healthyNotebookMemoryPolicy } from './memory-policy.test-support'
 import { withNotebookExecutionIntent } from './execution-intent'
 import { NotebookKernelExecutor } from './kernel-executor'
@@ -294,6 +303,158 @@ it.skipIf(process.platform === 'win32')(
     }
   }
 )
+
+it.skipIf(process.platform === 'win32')(
+  'force closes the verified original REPL after one retry and keeps the same stop feedback',
+  async () => {
+    const root = await mkdtemp(join(tmpdir(), 'notebook-release-force-'))
+    let degrade = true
+    const terminateTree = vi.fn<typeof terminateProcessTree>((child, signal) =>
+      degrade && signal !== 'SIGKILL'
+        ? Promise.resolve({ reaped: false })
+        : terminateProcessTree(child, signal)
+    )
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectId: 'project',
+      memoryPolicy: healthyNotebookMemoryPolicy(),
+      executorFactory: () =>
+        new NotebookKernelExecutor({
+          replLoopPath: join(__dirname, '../../../resources/notebook/repl_loop.js'),
+          terminateTree
+        })
+    })
+    const scope = { projectId: 'project', sessionId: 'session', workspaceCwd: root }
+    try {
+      expect(await service.executeControl({ ...scope, code: 'globalThis.x = 1' })).toMatchObject({
+        status: 'completed'
+      })
+      const [process] = (await service.getProcessMonitor()).instances
+      const [group] = (await service.getProjectResources(scope)).groups
+      const release = await service.releaseSessionResources(
+        {
+          ...scope,
+          revision: group.revision,
+          stopAll: { comment: 'Use smaller batches' }
+        },
+        () => undefined
+      )
+      await service.waitForSessionTeardown(scope)
+      expect(
+        service.getResourceRelease({ ...scope, operationId: release.operationId })
+      ).toMatchObject({
+        status: 'released',
+        phase: 'force-close',
+        resources: [{ status: 'released', processesTerminated: true, projection: 'complete' }]
+      })
+      expect(terminateTree.mock.calls.map(([child, signal]) => [child.pid, signal])).toEqual([
+        [process.pid, undefined],
+        [process.pid, undefined],
+        [process.pid, 'SIGKILL']
+      ])
+      expect(service.ownedResources(scope)).toEqual([])
+      expect(service.manualKernelTerminations(scope.projectId, scope.sessionId)).toEqual([
+        expect.objectContaining({
+          instanceId: process.id,
+          operationId: release.operationId,
+          status: 'stopped',
+          comment: 'Use smaller batches'
+        })
+      ])
+    } finally {
+      degrade = false
+      await service.dispose()
+      await rm(root, { recursive: true, force: true })
+    }
+  }
+)
+
+it('finishes installer cleanup after verified exit and keeps the environment recovery gate', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'notebook-release-install-'))
+  const runtimeRoot = getRuntimeRoot(root)
+  const started = Promise.withResolvers<void>()
+  let reaped = false
+  const cleanup = vi.fn(async () => ({ reaped }))
+  const failure = retainEnvironmentChildCleanup(new Error(CHILD_UNCONFIRMED), {
+    identity: {},
+    startedAt: Date.now(),
+    release: cleanup
+  })
+  const service = new NotebookRuntimeService({
+    configRoot: root,
+    dataRoot: root,
+    projectId: 'project',
+    memoryPolicy: healthyNotebookMemoryPolicy(),
+    getPackageMirror: () => ({ condaChannel: 'https://mirror.invalid/conda-forge/' }),
+    environmentStateTracker: {
+      prepareRun: vi.fn(),
+      captureCompletedRun: vi.fn(),
+      inspectPackages: vi.fn(),
+      markPackageMutationDirty: vi.fn().mockResolvedValue(undefined),
+      refreshAfterPackageMutation: vi.fn()
+    },
+    installPackagesImpl: async (_request, deps) => {
+      deps?.onBeforeSpawn?.()
+      started.resolve()
+      const signal = deps?.signal
+      if (!signal) throw new Error('Installer did not receive a release signal.')
+      return new Promise<never>((_resolve, reject) => {
+        if (signal.aborted) reject(failure)
+        else signal.addEventListener('abort', () => reject(failure), { once: true })
+      })
+    }
+  })
+  const scope = { projectId: 'project', sessionId: 'session', workspaceCwd: root }
+  const install = service.managePackages({ ...scope, language: 'python', packages: ['numpy'] })
+  try {
+    await Promise.race([
+      started.promise,
+      install.then(({ error }) => {
+        throw new Error(error)
+      })
+    ])
+    const [group] = (await service.getProjectResources(scope)).groups
+    const release = await service.releaseSessionResources(
+      { ...scope, revision: group.revision, stopAll: {} },
+      () => undefined
+    )
+    const request = { ...scope, operationId: release.operationId }
+    await expect(service.waitForSessionTeardown(scope)).rejects.toThrow(/cleanup is incomplete/i)
+    await expect(install).resolves.toMatchObject({ ok: false })
+    expect(cleanup).toHaveBeenCalledTimes(2)
+    expect(service.ownedResources(scope)).toEqual([
+      expect.objectContaining({ group: 'installer', phase: 'cleanup-pending' })
+    ])
+    expect(service.getResourceRelease(request)).toMatchObject({
+      status: 'partial',
+      resources: [{ status: 'incomplete', error: CHILD_UNCONFIRMED }]
+    })
+
+    reaped = true
+    await service.retryResourceRelease(request, () => undefined)
+    await service.waitForSessionTeardown(scope)
+    expect(service.getResourceRelease(request)).toMatchObject({
+      status: 'released',
+      resources: [
+        { status: 'released', processesTerminated: true, environmentRecoveryRequired: true }
+      ]
+    })
+    expect(service.getResourceRelease(request).resources[0].error).toBeUndefined()
+    expect((await service.retryResourceRelease(request, () => undefined)).status).toBe('released')
+    expect(cleanup).toHaveBeenCalledTimes(3)
+    expect(service.ownedResources(scope)).toEqual([])
+    expect(service.isPrefixLiveUnconfirmed(envPrefix(runtimeRoot, DEFAULT_PY_ENV))).toBe(true)
+    expect(
+      await RuntimeOperationJournal.forPath(operationJournalPath(runtimeRoot)).pending()
+    ).toEqual([expect.objectContaining({ kind: 'install', repairReason: 'interrupted-install' })])
+  } finally {
+    reaped = true
+    await service.dispose()
+    await install
+    await rm(root, { recursive: true, force: true })
+  }
+})
 
 it.skipIf(process.platform === 'win32')(
   'retains failed original cleanup and retries the same operation without including a successor',
@@ -699,7 +860,7 @@ it('observes and releases an unstarted original batch without opening Compute or
     const group = (await service.getProjectResources(scope)).groups[0]
     expect(group.resources).toEqual([expect.objectContaining({ group: 'batch', phase: 'ready' })])
     const operation = await service.releaseSessionResources(
-      { ...scope, revision: group.revision },
+      { ...scope, revision: group.revision, stopAll: {} },
       () => undefined
     )
     await service.waitForSessionTeardown(scope)

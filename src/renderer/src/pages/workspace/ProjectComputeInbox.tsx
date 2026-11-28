@@ -240,7 +240,7 @@ const ProjectComputeInbox = ({ isActive = true }: { isActive?: boolean }): React
   }, [isActive])
 
   useEffect(() => {
-    if (!projectId) return
+    if (!projectId || !isRemote) return
     const visible = (): boolean => notebookVisible.current && document.visibilityState !== 'hidden'
     const activity = createNotebookRefresh(
       projectId,
@@ -279,10 +279,10 @@ const ProjectComputeInbox = ({ isActive = true }: { isActive?: boolean }): React
       resources.dispose()
       stop()
     }
-  }, [projectId])
+  }, [projectId, isRemote])
 
   useEffect(() => {
-    if (!projectId || !isActive) return
+    if (!projectId || !isActive || !isRemote) return
     let timer: ReturnType<typeof setTimeout> | undefined
     const schedule = (): void => {
       clearTimeout(timer)
@@ -298,7 +298,7 @@ const ProjectComputeInbox = ({ isActive = true }: { isActive?: boolean }): React
       clearTimeout(timer)
       document.removeEventListener('visibilitychange', schedule)
     }
-  }, [projectId, isActive])
+  }, [projectId, isActive, isRemote])
 
   useEffect(() => {
     if (!projectId) return
@@ -388,8 +388,14 @@ const ProjectComputeInbox = ({ isActive = true }: { isActive?: boolean }): React
       </header>
 
       <ScrollArea className="min-h-0 flex-1">
-        <div className="space-y-6 px-6 py-6">
-          {projectId ? (
+        <div
+          className={
+            isRemote
+              ? 'space-y-6 px-6 py-6'
+              : 'space-y-4 px-4 py-5 @lg/compute:space-y-6 @lg/compute:px-6 @lg/compute:py-6'
+          }
+        >
+          {isRemote && projectId ? (
             <NotebookResourcePanel
               key={projectId}
               isActive={isActive}

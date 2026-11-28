@@ -18,6 +18,7 @@ export type NotebookProcessObservation = {
   status: NotebookProcessStatus
   startedAt: number
   pid?: number
+  canForceClose?: boolean
   hasLastCell?: boolean
   lastCell?: NotebookCellPreview
   memoryBytes?: number
@@ -45,6 +46,8 @@ export type NotebookProcessMonitorSnapshot = {
     uptimeSeconds: number
   }
   processMetricsAvailable: boolean
+  // Local discovery only. Project resource reads still enforce Session availability.
+  resourceProjectIds?: string[]
   instances: NotebookProcessObservation[]
 }
 
@@ -53,7 +56,14 @@ export type ManualKernelTermination = {
   instanceId: string
   projectId: string
   sessionId: string
-  kind: NotebookProcessObservation['kind']
+  kind:
+    | NotebookProcessObservation['kind']
+    | 'operation'
+    | 'installer'
+    | 'reproduction'
+    | 'batch'
+    | 'kernel'
+  operationId?: string
   pid?: number
   requestedAt: number
   comment: string
@@ -66,4 +76,5 @@ export type TerminateNotebookProcessRequest = ({ id: string } | { ids: string[] 
   projectId: string
   sessionId: string
   comment?: string
+  force?: boolean
 }

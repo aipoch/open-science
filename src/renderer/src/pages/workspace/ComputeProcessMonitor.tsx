@@ -5,110 +5,41 @@ import {
   Monitor,
   Info,
   RefreshCw,
-  Square,
   LoaderCircle,
-  MoreVertical,
-  ArrowUpRight,
   Terminal,
   FileCode2,
-  ChevronRight
+  ChevronRight,
+  Square
 } from 'lucide-react'
 import type {
   NotebookProcessMonitorSnapshot,
   NotebookProcessObservation
 } from '../../../../shared/notebook-process-monitor'
 import { Button } from '@/components/ui/button'
-import {
-  ActionMenuProvider,
-  ActionMenuTarget,
-  useActionMenu,
-  type ActionMenuDefinition,
-  type ActionMenuRecipeEntry
-} from '@/components/action-menu'
 import { PythonIcon, RIcon } from '@/components/language-icons'
 import { ErrorNotice } from '@/components/error-notice'
+import type {
+  NotebookProjectResources,
+  NotebookSessionResources
+} from '../../../../shared/notebook-resources'
+import { NotebookResourcePanel, ResourceDetails } from './NotebookResourcePanel'
 import { ComputePanel } from './ComputePanel'
-import { formatComputeUptime, totalKernelUptime } from './compute-monitor-presentation'
+import { ComputeOpenSessionButton, ResourceActionTooltip } from './ComputeResourceActions'
+import {
+  formatComputeUptime,
+  releaseBlockedLabel,
+  totalKernelUptime
+} from './compute-monitor-presentation'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { ComputeCellPreview } from './ComputeCellPreview'
+import { useProjectStore } from '@/stores/project-store'
 import { useDateTimeFormat } from '@/hooks/useDateTimeFormat'
 
-const SESSION_ACTIONS = {
-  open: { labelKey: 'Open session', icon: ArrowUpRight },
-  stop: { labelKey: 'Stop all', icon: Square, danger: true }
-} satisfies Record<string, ActionMenuDefinition>
-const SESSION_RECIPE = [
-  { kind: 'action', action: 'open' },
-  { kind: 'action', action: 'stop' }
-] as const satisfies readonly ActionMenuRecipeEntry<keyof typeof SESSION_ACTIONS>[]
+const resourceColumns =
+  'grid grid-cols-[minmax(0,1fr)_3.5rem_3.25rem_5rem] items-center gap-x-1.5 @xl/compute:grid-cols-[minmax(0,1fr)_5.5rem_4rem_5.5rem]'
 
-function SessionActions({
-  identity,
-  items,
-  disabled,
-  onOpen,
-  onStop,
-  focusReason
-}: {
-  identity: string
-  items: NotebookProcessObservation[]
-  disabled: boolean
-  onOpen: () => void
-  focusReason: () => void
-  onStop: (items: NotebookProcessObservation[], trigger: HTMLButtonElement) => void
-}): React.JSX.Element {
-  const { t } = useTranslation()
-  const menu = useActionMenu()
-  const trigger = useRef<HTMLButtonElement>(null)
-  const stopSelected = useRef(false)
-  const targetId = `compute-session-${identity}`
-  return (
-    <ActionMenuTarget
-      asChild
-      targetId={targetId}
-      identityKey={identity}
-      invocation={items}
-      catalog={SESSION_ACTIONS}
-      recipe={SESSION_RECIPE}
-      onRestoreFocus={(restoreDefault) => {
-        if (stopSelected.current) {
-          stopSelected.current = false
-          focusReason()
-        } else restoreDefault()
-      }}
-      bindings={{
-        open: { execute: onOpen },
-        stop: {
-          disabled,
-          execute: (selected) => {
-            stopSelected.current = true
-            if (trigger.current) onStop(selected, trigger.current)
-          }
-        }
-      }}
-    >
-      <Button
-        ref={trigger}
-        variant="ghost"
-        size="icon-xs"
-        className="text-muted-foreground"
-        aria-label={t('Session actions')}
-        aria-haspopup="menu"
-        onClick={(event) => {
-          const bounds = event.currentTarget.getBoundingClientRect()
-          menu.openMenu({
-            targetId,
-            pointer: { x: bounds.right, y: bounds.bottom },
-            align: 'end',
-            focusTarget: event.currentTarget
-          })
-        }}
-      >
-        <MoreVertical className="size-4" />
-      </Button>
-    </ActionMenuTarget>
-  )
-}
+const resourceStopIconClassName =
+  'justify-self-end text-muted-foreground hover:bg-destructive/10 hover:text-status-failure-strong dark:hover:bg-destructive/10 dark:hover:text-status-failure-dark-emphasis'
 
 const bytes = (value: number): string => `${(value / 1024 ** 3).toFixed(1)} GB`
 const megabytes = (value: number): string => `${(value / 1024 ** 2).toFixed(1)} MB`
@@ -131,10 +62,12 @@ const resourceTotal = (
 }
 function Sparkline({
   values,
-  label
+  label,
+  tone
 }: {
   values: (number | undefined)[]
   label: string
+  tone: 'memory' | 'cpu'
 }): React.JSX.Element {
   const max = Math.max(0.001, ...values.map((value) => value ?? 0))
   const points = values.map((value, index) =>
@@ -150,10 +83,12 @@ function Sparkline({
   return (
     <svg
       viewBox="0 0 100 26"
-      className="mt-1 h-5 w-full text-primary"
+      preserveAspectRatio="none"
+      className={`mt-1 h-5 w-full ${tone === 'cpu' ? 'text-status-info-foreground dark:text-status-info-dark-foreground' : 'text-primary'}`}
       role="img"
       aria-label={label}
     >
+      <line x1="0" x2="100" y1="24" y2="24" className="stroke-border" />
       {segments.map((segment, index) => (
         <polyline
           key={index}
@@ -161,6 +96,7 @@ function Sparkline({
           fill="none"
           stroke="currentColor"
           strokeWidth="1.5"
+          vectorEffect="non-scaling-stroke"
         />
       ))}
     </svg>
@@ -179,8 +115,12 @@ export function ComputeProcessMonitor({
   openSession: (projectId: string, sessionId: string) => void
 }): React.JSX.Element {
   const { t } = useTranslation()
+  const stopLabel = t('Stop')
+  const stopAllLabel = t('Stop all')
   const formatDateTime = useDateTimeFormat()
+  const projects = useProjectStore((state) => state.projects)
   const [snapshot, setSnapshot] = useState<NotebookProcessMonitorSnapshot>()
+  const resourceProjectIds = snapshot?.resourceProjectIds
   const [allProjects, setAllProjects] = useState(true)
   const sessionContentId = useId()
   const [expandedSessions, setExpandedSessions] = useState<ReadonlySet<string>>(new Set())
@@ -196,24 +136,127 @@ export function ComputeProcessMonitor({
   const refreshInFlight = useRef(false)
   const [error, setError] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
-  const [target, setTarget] = useState<NotebookProcessObservation[]>()
+  const [target, setTarget] = useState<NotebookProcessObservation>()
   const [comment, setComment] = useState('')
-  const [targetScope, setTargetScope] = useState<'kernel' | 'session'>('kernel')
+  const [confirmation, setConfirmation] = useState<NotebookSessionResources>()
+  const preparingSessionStop = useRef(false)
+  const sessionStopTrigger = useRef<HTMLButtonElement>(null)
+  const allProjectsButton = useRef<HTMLButtonElement>(null)
+  const [sessionStopError, setSessionStopError] = useState<{
+    description: string
+    diagnostics?: string
+  }>()
+  const [resourceReadFailures, setResourceReadFailures] = useState<ReadonlySet<string>>(
+    () => new Set()
+  )
+  const [resourceSnapshots, setResourceSnapshots] = useState(
+    new Map<string, { value: NotebookProjectResources; observedAt: number }>()
+  )
+  const discoveredProjects = useRef<ReadonlySet<string>>(new Set())
+  const unsettledProjects = useRef(new Set<string>())
+  const resourceReads = useRef(new Map<string, Promise<NotebookProjectResources>>())
+  const readResources = useCallback(
+    (id: string, afterCommand = false): Promise<NotebookProjectResources> => {
+      const pending = resourceReads.current.get(id)
+      if (pending && !afterCommand) return pending
+      const read: Promise<NotebookProjectResources> = window.api.notebook
+        .getProjectResources({ projectId: id })
+        .then(
+          (value) => {
+            if (active.current && !document.hidden && resourceReads.current.get(id) === read) {
+              if (value.releases.some(({ status }) => status !== 'released'))
+                unsettledProjects.current.add(id)
+              else unsettledProjects.current.delete(id)
+              setResourceSnapshots((previous) =>
+                new Map(previous).set(id, { value, observedAt: Date.now() })
+              )
+              setResourceReadFailures((previous) => {
+                if (!previous.has(id)) return previous
+                const remaining = new Set(previous)
+                remaining.delete(id)
+                return remaining
+              })
+            }
+            return value
+          },
+          (error: unknown) => {
+            if (active.current && !document.hidden && resourceReads.current.get(id) === read) {
+              setResourceReadFailures((previous) =>
+                previous.has(id) ? previous : new Set(previous).add(id)
+              )
+            }
+            throw error
+          }
+        )
+        .finally(() => {
+          if (resourceReads.current.get(id) === read) resourceReads.current.delete(id)
+        })
+      resourceReads.current.set(id, read)
+      return read
+    },
+    []
+  )
+  const refreshResources = useCallback(
+    (id: string, afterCommand = false): void => {
+      if (!window.api.notebook.getProjectResources) return
+      void readResources(id, afterCommand).catch(() => undefined)
+    },
+    [readResources]
+  )
+  const refreshVisibleResources = useCallback((): void => {
+    const projectIds = new Set(projectId ? [projectId] : [])
+    if (allProjects) {
+      for (const id of discoveredProjects.current) projectIds.add(id)
+      for (const id of unsettledProjects.current) projectIds.add(id)
+    }
+    for (const id of projectIds) refreshResources(id)
+  }, [allProjects, projectId, refreshResources])
+  const prepareSessionStop = async (
+    id: string,
+    sessionId: string,
+    trigger: HTMLButtonElement
+  ): Promise<void> => {
+    if (preparingSessionStop.current || confirmation) return
+    preparingSessionStop.current = true
+    sessionStopTrigger.current = trigger
+    setSessionStopError(undefined)
+    try {
+      const view = await readResources(id)
+      if (!active.current || !trigger.isConnected) return
+      const group = view.groups.find((entry) => entry.sessionId === sessionId)
+      if (!group) {
+        setSessionStopError({
+          description: t('Notebook resources changed. Refresh and review the current resources.')
+        })
+        return
+      }
+      if (group.releaseBlockedReason) {
+        setSessionStopError({ description: releaseBlockedLabel(group.releaseBlockedReason, t) })
+        return
+      }
+      setTarget(undefined)
+      setConfirmation(group)
+    } catch (error) {
+      if (active.current && trigger.isConnected) {
+        setSessionStopError({
+          description: t('Could not refresh Notebook resources'),
+          diagnostics: error instanceof Error ? error.message : String(error)
+        })
+      }
+    } finally {
+      preparingSessionStop.current = false
+    }
+  }
   const reasonInput = useRef<HTMLTextAreaElement>(null)
   const stopTrigger = useRef<HTMLButtonElement>(null)
   const [history, setHistory] = useState(
     new Map<string, { memory: (number | undefined)[]; cpu: (number | undefined)[] }>()
   )
   const lastSample = useRef(0)
-  const selectTarget = (
-    items: NotebookProcessObservation[],
-    scope: 'kernel' | 'session',
-    trigger: HTMLButtonElement
-  ): void => {
+  const selectTarget = (item: NotebookProcessObservation, trigger: HTMLButtonElement): void => {
     stopTrigger.current = trigger
-    setTargetScope(scope)
     setComment('')
-    setTarget(items)
+    setTarget(item)
   }
   useEffect(() => {
     if (target) reasonInput.current?.focus()
@@ -269,6 +312,16 @@ export function ComputeProcessMonitor({
   }, [expanded, isActive, refresh])
 
   useEffect(() => {
+    if (!isActive || !allProjects || document.hidden || !resourceProjectIds) return
+    const previous = discoveredProjects.current
+    const next = new Set(resourceProjectIds)
+    discoveredProjects.current = next
+    for (const id of next) if (!previous.has(id) && id !== projectId) refreshResources(id)
+    // Re-read departures after the monitoring sample so a prior read cannot leave a stale row.
+    for (const id of previous) if (!next.has(id)) refreshResources(id, true)
+  }, [allProjects, isActive, projectId, refreshResources, resourceProjectIds])
+
+  useEffect(() => {
     if (!isActive) return
     let disposed = false
     let polling = false
@@ -276,6 +329,7 @@ export function ComputeProcessMonitor({
     const poll = async (): Promise<void> => {
       if (disposed || polling || document.hidden) return
       polling = true
+      refreshVisibleResources()
       await refresh()
       polling = false
       if (!disposed && !document.hidden) timer = setTimeout(() => void poll(), 3000)
@@ -291,24 +345,18 @@ export function ComputeProcessMonitor({
       clearTimeout(timer)
       document.removeEventListener('visibilitychange', onVisibility)
     }
-  }, [isActive, refresh])
+  }, [isActive, refresh, refreshVisibleResources])
 
-  const terminate = async (): Promise<void> => {
-    if (!target) return
-    setStopping(target[0].id)
+  const terminate = async (item: NotebookProcessObservation, force = false): Promise<void> => {
+    if (stopping) return
+    setStopping(item.id)
     setActionError(false)
     try {
       await window.api.notebook.terminateMonitoredProcess({
-        ...(target.length === 1
-          ? { id: target[0].id }
-          : {
-              ids: target.map((item) => item.id),
-              projectId: target[0].projectId,
-              sessionId: target[0].sessionId
-            }),
-        projectId: target[0].projectId,
-        sessionId: target[0].sessionId,
-        ...(comment.trim() ? { comment: comment.trim() } : {})
+        id: item.id,
+        projectId: item.projectId,
+        sessionId: item.sessionId,
+        ...(force ? { force: true } : comment.trim() ? { comment: comment.trim() } : {})
       })
     } catch {
       setActionError(true)
@@ -323,20 +371,43 @@ export function ComputeProcessMonitor({
     setAllProjects(all)
     setExpanded(new Set())
     setTarget(undefined)
+    setConfirmation(undefined)
+    setSessionStopError(undefined)
   }
-  const allInstances = snapshot?.instances ?? []
-  const instances = allInstances.filter((item) => allProjects || item.projectId === projectId)
+  const instances = (snapshot?.instances ?? []).filter(
+    (item) => allProjects || item.projectId === projectId
+  )
+  const resourceInScope = (id: string): boolean =>
+    id === projectId || (allProjects && (!resourceProjectIds || resourceProjectIds.includes(id)))
+  const resourceReadFailed = [...resourceReadFailures].some(
+    (id) =>
+      resourceInScope(id) ||
+      (allProjects &&
+        resourceSnapshots.get(id)?.value.releases.some(({ status }) => status !== 'released'))
+  )
   const cpuDescription = (value: number | undefined): string =>
     value === undefined
       ? t('CPU usage')
       : t('{{percent}}% CPU · 100% = 1 core', {
           percent: value > 0 && value < 0.0001 ? '<0.01' : (value * 100).toFixed(2)
         })
-  const groups = Map.groupBy(instances, (item) => JSON.stringify([item.projectId, item.sessionId]))
+  const groupKey = (item: { projectId: string; sessionId: string }): string =>
+    JSON.stringify([item.projectId, item.sessionId])
+  const groups = Map.groupBy(instances, groupKey)
+  const resourceGroups = new Map(
+    [...resourceSnapshots.entries()].flatMap(([id, { value }]) =>
+      resourceInScope(id) ? value.groups.map((group) => [groupKey(group), group] as const) : []
+    )
+  )
+  for (const [key, group] of resourceGroups) {
+    if (!groups.has(key) && group.resources.some(({ group }) => group !== 'operation'))
+      groups.set(key, [])
+  }
   const host = snapshot?.host
   const uptime = (seconds: number): string => formatComputeUptime(seconds, t)
   const status = (item: NotebookProcessObservation): string => {
     if (item.id === stopping || item.status === 'cleaning') return t('Cleaning up')
+    if (item.canForceClose) return t('Stop timed out')
     if (item.status === 'cleanup-failed') return t('Cleanup failed')
     return item.status === 'running' ? t('Running') : t('Idle')
   }
@@ -349,18 +420,15 @@ export function ComputeProcessMonitor({
           ? t('JavaScript REPL')
           : t('Shell')
 
-  const selectedMemory = target?.every((item) => item.memoryBytes !== undefined)
-    ? megabytes(target.reduce((sum, item) => sum + item.memoryBytes!, 0))
-    : undefined
+  const selectedMemory =
+    target?.memoryBytes === undefined ? undefined : megabytes(target.memoryBytes)
   const terminationForm = target && (
     <form
-      aria-label={
-        targetScope === 'session' ? t('Stop all session kernels') : t('Stop this kernel?')
-      }
+      aria-label={t('Stop this kernel?')}
       className="border-t border-border bg-muted/30 px-4 py-4"
       onSubmit={(event) => {
         event.preventDefault()
-        if (!stopping) void terminate()
+        if (!stopping) void terminate(target)
       }}
       onKeyDown={(event) => {
         if (event.key === 'Escape' && !stopping) {
@@ -370,9 +438,9 @@ export function ComputeProcessMonitor({
       }}
     >
       <p className="text-xs font-medium">
-        {targetScope === 'session' ? t('Stop all session kernels') : t('Stop this kernel?')}
+        {t('Stop this kernel?')}
         <span className="ml-2 font-normal text-muted-foreground">
-          {[...new Set(target.map(kind))].join(' · ')}
+          {kind(target)}
           {selectedMemory && <> · {t('{{memory}} held', { memory: selectedMemory })}</>}
         </span>
       </p>
@@ -416,14 +484,16 @@ export function ComputeProcessMonitor({
               : t('Terminate')}
         </Button>
         <p className="text-[11px] text-muted-foreground sm:ml-auto">
-          {t('Your reason is shared with the agent in its next Notebook tool response.')}
+          {t(
+            'A short note helps the agent understand why you stopped and decide what to try next.'
+          )}
         </p>
       </div>
     </form>
   )
 
   return (
-    <ActionMenuProvider>
+    <TooltipProvider>
       <ComputePanel
         title={t('Local computer')}
         icon={Monitor}
@@ -434,7 +504,10 @@ export function ComputeProcessMonitor({
             variant="ghost"
             size="icon-sm"
             className="text-muted-foreground"
-            onClick={() => void refresh(true)}
+            onClick={() => {
+              refreshVisibleResources()
+              void refresh(true)
+            }}
             disabled={refreshing}
             aria-label={t('Refresh')}
             title={t('Updates every 3 seconds')}
@@ -443,7 +516,7 @@ export function ComputeProcessMonitor({
           </Button>
         }
       >
-        <div className="p-4">
+        <div className="px-3 @md/compute:px-4">
           {error && (
             <ErrorNotice
               inline
@@ -451,13 +524,13 @@ export function ComputeProcessMonitor({
               description={t('The last successful sample is shown. Try refreshing again.')}
             />
           )}
-          <details className="group/system mb-6" data-system-details>
-            <summary className="flex cursor-pointer list-none flex-wrap items-center justify-between gap-3 rounded-md outline-none focus-visible:keyboard-focus [&::-webkit-details-marker]:hidden">
+          <details className="group/system border-b border-border" data-system-details>
+            <summary className="flex cursor-pointer list-none flex-wrap items-center justify-between gap-x-3 gap-y-1.5 rounded-md py-2.5 outline-none focus-visible:keyboard-focus [&::-webkit-details-marker]:hidden">
               <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
                 <ChevronRight className="size-3 transition-transform motion-reduce:transition-none group-open/system:rotate-90" />
                 {t('System details')}
               </span>
-              <span className="flex flex-wrap gap-x-5 gap-y-1 text-xs text-muted-foreground">
+              <span className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
                 <span className="whitespace-nowrap" title={t('CPU usage')}>
                   {t('CPU usage')}{' '}
                   <strong className="ml-1 font-medium tabular-nums text-foreground">
@@ -483,7 +556,7 @@ export function ComputeProcessMonitor({
                 ) : null}
               </span>
             </summary>
-            <div className="mt-3 flex flex-wrap gap-x-5 gap-y-2 rounded-md bg-muted/40 p-3 text-xs text-muted-foreground">
+            <div className="mb-3 flex flex-wrap gap-x-5 gap-y-2 rounded-md bg-muted/40 p-3 text-xs text-muted-foreground">
               {host && (
                 <>
                   <span title={t('System uptime')}>
@@ -501,17 +574,17 @@ export function ComputeProcessMonitor({
             </div>
           </details>
           <div>
-            <div className="flex flex-wrap items-start justify-between gap-3 pb-4">
+            <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 pt-4 pb-3">
               <div className="min-w-0">
-                <h3 className="text-sm font-medium">{t('Kernels')}</h3>
+                <h3 className="text-sm font-semibold">{t('Notebook resources')}</h3>
                 <p
                   className="mt-1 flex flex-wrap gap-x-2 text-xs tabular-nums text-muted-foreground"
                   data-testid="kernel-summary"
                 >
                   <span>
-                    {t('{{count}} kernels', {
+                    {t('{{count}} processes', {
                       count: instances.length,
-                      defaultValue_one: '{{count}} kernel'
+                      defaultValue_one: '{{count}} process'
                     })}
                   </span>
                   <span>
@@ -520,14 +593,14 @@ export function ComputeProcessMonitor({
                       count: instances.filter((item) => item.status === 'running').length
                     })}
                   </span>
-                  <span>
+                  <span className="sr-only">
                     ·{' '}
                     {resourceTotal(
                       instances.map((item) => item.memoryBytes),
                       megabytes
                     )}
                   </span>
-                  <span title={t('CPU usage')}>
+                  <span className="sr-only">
                     ·{' '}
                     {resourceTotal(
                       instances.map((item) => item.cpuCores),
@@ -538,23 +611,24 @@ export function ComputeProcessMonitor({
                 </p>
               </div>
               <div
-                className="flex shrink-0 items-center gap-0.5 rounded-md bg-muted/50 p-0.5"
+                className="flex shrink-0 items-center gap-0.5 rounded-md bg-muted/60 p-0.5"
                 role="group"
-                aria-label={t('Notebook processes')}
+                aria-label={t('Notebook resources')}
               >
                 <Button
+                  ref={allProjectsButton}
                   variant="ghost"
                   size="sm"
-                  className="text-foreground aria-pressed:bg-card"
+                  className="text-muted-foreground aria-pressed:bg-card aria-pressed:text-foreground aria-pressed:shadow-xs"
                   onClick={() => selectScope(true)}
                   aria-pressed={allProjects}
                 >
-                  {t('All kernels')}
+                  {t('All projects')}
                 </Button>
                 <Button
                   variant="ghost"
                   size="sm"
-                  className="text-foreground aria-pressed:bg-card"
+                  className="text-muted-foreground aria-pressed:bg-card aria-pressed:text-foreground aria-pressed:shadow-xs"
                   onClick={() => selectScope(false)}
                   aria-pressed={!allProjects}
                   disabled={!projectId}
@@ -572,92 +646,141 @@ export function ComputeProcessMonitor({
                 )}
               />
             )}
-            {instances.length === 0 && (
-              <div className="py-8 text-center text-sm text-muted-foreground">
-                <p>
-                  {allProjects
-                    ? t('No tracked Notebook processes')
-                    : t('No kernels in this project')}
-                </p>
-                {!allProjects && allInstances.length > 0 && (
-                  <Button
-                    variant="link"
-                    size="sm"
-                    className="mt-2"
-                    onClick={() => selectScope(true)}
-                  >
-                    {t('View all kernels ({{total}})', { total: allInstances.length })}
-                  </Button>
-                )}
+            {resourceReadFailed && sessionStopError?.diagnostics === undefined && (
+              <ErrorNotice inline role="status" title={t('Could not refresh Notebook resources')} />
+            )}
+            {sessionStopError && (
+              <ErrorNotice
+                inline
+                role="alert"
+                title={t('Notebook resources')}
+                description={sessionStopError.description}
+                errorCode={sessionStopError.diagnostics}
+                diagnosticsLabel={
+                  sessionStopError.diagnostics !== undefined ? t('Details') : undefined
+                }
+                dismissButton={{
+                  label: t('Dismiss'),
+                  onClick: () => setSessionStopError(undefined)
+                }}
+              />
+            )}
+            {groups.size > 0 && (
+              <div className={`${resourceColumns} px-2 pb-1.5 text-xs text-muted-foreground`}>
+                <span className="ps-5">{t('Session')}</span>
+                <span className="text-right">{t('Memory', { context: 'runtime' })}</span>
+                <span className="text-right" title={t('CPU cores')}>
+                  <span aria-hidden="true" className="@lg/compute:hidden">
+                    {t('CPU')}
+                  </span>
+                  <span className="sr-only @lg/compute:not-sr-only">{t('CPU cores')}</span>
+                </span>
               </div>
             )}
-            {instances.length > 0 && (
-              <div className="grid grid-cols-[minmax(0,1fr)_5rem_4rem] gap-2 pr-8 pb-2 text-xs text-muted-foreground @xl/compute:grid-cols-[minmax(0,1fr)_6rem_5rem]">
-                <span>{t('Session')}</span>
-                <span className="text-right whitespace-nowrap">{t('Memory usage')}</span>
-                <span className="text-right whitespace-nowrap">{t('CPU cores')}</span>
-              </div>
-            )}
-            <div className="divide-y divide-border border-t border-border">
-              {[...groups].map(([key, items]) => (
-                <section key={key}>
-                  <header className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      className="grid min-h-14 min-w-0 flex-1 grid-cols-[minmax(0,1fr)_5rem_4rem] items-center gap-2 rounded-md py-3 text-left outline-none hover:bg-muted/40 focus-visible:keyboard-focus @xl/compute:grid-cols-[minmax(0,1fr)_6rem_5rem]"
-                      title={sessionTitles.get(items[0].sessionId) || t('Untitled conversation')}
-                      aria-expanded={expandedSessions.has(key)}
-                      aria-controls={`${sessionContentId}-${encodeURIComponent(key)}`}
-                      onClick={() => {
-                        const isOpen = expandedSessions.has(key)
-                        setExpandedSessions((previous) => {
-                          const next = new Set(previous)
-                          if (isOpen) next.delete(key)
-                          else next.add(key)
-                          return next
-                        })
-                        if (isOpen) {
-                          const ids = new Set(items.map((item) => item.id))
-                          setExpanded(
-                            (previous) => new Set([...previous].filter((id) => !ids.has(id)))
-                          )
-                          if (targetScope === 'kernel' && target?.some((item) => ids.has(item.id)))
-                            setTarget(undefined)
-                        }
-                      }}
-                    >
-                      <span className="flex min-w-0 items-start gap-2">
-                        <ChevronRight
-                          className={`mt-1 size-3 shrink-0 text-muted-foreground transition-transform motion-reduce:transition-none ${expandedSessions.has(key) ? 'rotate-90' : ''}`}
-                        />
-                        <span className="min-w-0">
-                          <span className="block truncate text-sm font-medium">
-                            {sessionTitles.get(items[0].sessionId) || t('Untitled conversation')}
-                          </span>
-                          <span className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs tabular-nums text-muted-foreground">
-                            <span className="whitespace-nowrap">
-                              {t('{{count}} kernels', {
-                                count: items.length,
-                                defaultValue_one: '{{count}} kernel'
-                              })}
-                            </span>
-                            <span
-                              className="inline-flex items-center gap-1 whitespace-nowrap"
-                              title={t('Sum of current kernel uptimes, including idle time.')}
-                              aria-label={t('Total kernel uptime: {{duration}}', {
-                                duration: uptime(totalKernelUptime(items, snapshot!.sampledAt))
-                              })}
+            <div
+              className={
+                groups.size > 0 ? 'divide-y divide-border border-y border-border' : undefined
+              }
+            >
+              {[...groups]
+                .sort(([left], [right]) => left.localeCompare(right))
+                .map(([key, items]) => {
+                  const group = resourceGroups.get(key)
+                  const scope = items[0] ?? group!
+                  const other =
+                    group?.resources.filter(
+                      ({ group }) =>
+                        group !== 'operation' &&
+                        (!items.length || (group !== 'kernel' && group !== 'shell'))
+                    ) ?? []
+                  const sessionOpen = expandedSessions.has(key)
+                  const projectName =
+                    projects.find(({ id }) => id === scope.projectId)?.name ?? scope.projectId
+                  const contentId = `${sessionContentId}-${encodeURIComponent(key)}`
+                  const titleId = `${contentId}-title`
+                  const sessionTitle =
+                    sessionTitles.get(scope.sessionId) || t('Untitled conversation')
+                  return (
+                    <section key={key}>
+                      <header className={`${resourceColumns} px-2`}>
+                        <div className="min-w-0 py-2">
+                          <div className="flex min-w-0 items-start gap-0.5">
+                            <button
+                              type="button"
+                              className="flex min-w-0 items-start gap-2 rounded-md text-left outline-none hover:bg-muted/40 focus-visible:keyboard-focus"
+                              title={sessionTitle}
+                              aria-expanded={sessionOpen}
+                              aria-controls={contentId}
+                              onClick={() => {
+                                setExpandedSessions((previous) => {
+                                  const next = new Set(previous)
+                                  if (sessionOpen) next.delete(key)
+                                  else next.add(key)
+                                  return next
+                                })
+                                if (!sessionOpen) refreshResources(scope.projectId)
+                                else {
+                                  const ids = new Set(items.map((item) => item.id))
+                                  setExpanded(
+                                    (previous) =>
+                                      new Set([...previous].filter((id) => !ids.has(id)))
+                                  )
+                                  if (target && ids.has(target.id)) setTarget(undefined)
+                                }
+                              }}
                             >
-                              <Clock3 className="size-3" aria-hidden="true" />
-                              <span data-session-uptime>
-                                {uptime(totalKernelUptime(items, snapshot!.sampledAt))}
+                              <ChevronRight
+                                aria-hidden="true"
+                                className={`mt-1 size-3 shrink-0 text-muted-foreground transition-transform motion-reduce:transition-none ${sessionOpen ? 'rotate-90' : ''}`}
+                              />
+                              <span
+                                id={titleId}
+                                className="line-clamp-2 text-sm font-semibold [overflow-wrap:anywhere]"
+                              >
+                                {sessionTitle}
                               </span>
-                            </span>
-                            {items.some((item) => item.status === 'running') && (
-                              <span>
-                                {t('{{count}} running', {
-                                  count: items.filter((item) => item.status === 'running').length
+                            </button>
+                            <ComputeOpenSessionButton
+                              className="-mt-0.5 shrink-0 self-start"
+                              describedBy={titleId}
+                              onClick={() => openSession(scope.projectId, scope.sessionId)}
+                            />
+                          </div>
+                          <span className="mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 ps-5 text-xs tabular-nums text-muted-foreground">
+                            {(allProjects || items.length > 0) && (
+                              <span className="inline-flex min-w-0 items-center gap-1.5">
+                                {allProjects && (
+                                  <span className="min-w-0 truncate" title={projectName}>
+                                    {projectName}
+                                  </span>
+                                )}
+                                {allProjects && items.length > 0 && (
+                                  <span aria-hidden="true" className="shrink-0">
+                                    {'·'}
+                                  </span>
+                                )}
+                                {items.length > 0 && (
+                                  <span className="shrink-0 whitespace-nowrap">
+                                    {t('{{count}} processes', {
+                                      count: items.length,
+                                      defaultValue_one: '{{count}} process'
+                                    })}
+                                  </span>
+                                )}
+                              </span>
+                            )}
+                            {items.length > 0 && snapshot && (
+                              <span
+                                className="sr-only"
+                                title={t('Sum of current kernel uptimes, including idle time.')}
+                                aria-label={t('Total kernel uptime: {{duration}}', {
+                                  duration: uptime(totalKernelUptime(items, snapshot.sampledAt))
                                 })}
+                              >
+                                <Clock3 className="size-3" aria-hidden="true" />
+                                <span data-session-uptime>
+                                  {uptime(totalKernelUptime(items, snapshot.sampledAt))}
+                                </span>
                               </span>
                             )}
                             {items.some((item) => item.status === 'cleanup-failed') && (
@@ -665,252 +788,361 @@ export function ComputeProcessMonitor({
                                 {t('Cleanup failed')}
                               </span>
                             )}
-                            {items.some(
-                              (item) => item.status === 'cleaning' || item.id === stopping
-                            ) && <span>{t('Cleaning up')}</span>}
+                            {(group?.releaseBlockedReason === 'release-in-progress' ||
+                              items.some(
+                                (item) => item.status === 'cleaning' || item.id === stopping
+                              )) && <span>{t('Cleaning up')}</span>}
                           </span>
+                        </div>
+                        <span
+                          className="text-right text-xs font-medium tabular-nums whitespace-nowrap"
+                          title={t('Process memory')}
+                        >
+                          {resourceTotal(
+                            items.map((item) => item.memoryBytes),
+                            megabytes
+                          )}
                         </span>
-                      </span>
-                      <span
-                        className="text-right text-xs tabular-nums whitespace-nowrap"
-                        title={t('Process memory')}
-                      >
-                        {resourceTotal(
-                          items.map((item) => item.memoryBytes),
-                          megabytes
-                        )}
-                      </span>
-                      <span
-                        className="text-right text-xs tabular-nums whitespace-nowrap"
-                        title={t('CPU cores')}
-                      >
-                        {resourceTotal(
-                          items.map((item) => item.cpuCores),
-                          cores
-                        )}
-                      </span>
-                    </button>
-                    <SessionActions
-                      identity={key}
-                      items={items}
-                      disabled={
-                        Boolean(stopping) || items.some((item) => item.status === 'cleaning')
-                      }
-                      onOpen={() => openSession(items[0].projectId, items[0].sessionId)}
-                      focusReason={() => reasonInput.current?.focus()}
-                      onStop={(selected, trigger) => selectTarget(selected, 'session', trigger)}
-                    />
-                  </header>
-                  {targetScope === 'session' &&
-                    target?.[0].projectId === items[0].projectId &&
-                    target[0].sessionId === items[0].sessionId &&
-                    terminationForm}
-                  <div
-                    id={`${sessionContentId}-${encodeURIComponent(key)}`}
-                    hidden={!expandedSessions.has(key)}
-                  >
-                    {expandedSessions.has(key) &&
-                      items.map((item) => (
-                        <div key={item.id} className="border-b border-border last:border-b-0">
-                          <details
-                            data-kernel-details
-                            open={expanded.has(item.id)}
-                            className="group/kernel"
-                            onToggle={(event) => {
-                              const open = event.currentTarget.open
-                              setExpanded((previous) => {
-                                if (previous.has(item.id) === open) return previous
-                                const next = new Set(previous)
-                                if (open) next.add(item.id)
-                                else next.delete(item.id)
-                                return next
-                              })
-                            }}
+                        <span
+                          className="text-right text-xs font-medium tabular-nums whitespace-nowrap"
+                          title={t('CPU cores')}
+                        >
+                          {resourceTotal(
+                            items.map((item) => item.cpuCores),
+                            cores
+                          )}
+                        </span>
+                        <ResourceActionTooltip label={stopAllLabel}>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon-sm"
+                            className={resourceStopIconClassName}
+                            aria-label={stopAllLabel}
+                            aria-describedby={titleId}
+                            disabled={
+                              Boolean(stopping) ||
+                              group?.releaseBlockedReason === 'release-in-progress' ||
+                              items.some((item) => item.status === 'cleaning')
+                            }
+                            onClick={(event) =>
+                              void prepareSessionStop(
+                                scope.projectId,
+                                scope.sessionId,
+                                event.currentTarget
+                              )
+                            }
                           >
-                            <summary className="grid cursor-pointer list-none grid-cols-[minmax(0,1fr)_5rem_4rem_1.5rem] items-center gap-2 rounded-md py-3 hover:bg-muted/40 [&::-webkit-details-marker]:hidden @xl/compute:grid-cols-[minmax(0,1fr)_6rem_5rem_1.5rem]">
-                              <div className="flex min-w-0 items-center gap-2 pl-3 @md/compute:pl-5">
-                                <ChevronRight className="size-3 shrink-0 text-muted-foreground transition-transform group-open/kernel:rotate-90" />
-                                <span
-                                  className="inline-flex size-5 shrink-0"
-                                  role="img"
-                                  aria-label={kind(item)}
-                                  title={kind(item)}
-                                >
-                                  <span className="size-full" aria-hidden="true">
-                                    {item.kind === 'python' ? (
-                                      <PythonIcon />
-                                    ) : item.kind === 'r' ? (
-                                      <RIcon />
-                                    ) : item.kind === 'repl' ? (
-                                      <FileCode2 className="size-full text-primary" />
-                                    ) : (
-                                      <Terminal className="size-full text-muted-foreground" />
-                                    )}
-                                  </span>
-                                </span>
-                                <div className="min-w-0">
-                                  <p className="truncate text-sm">{status(item)}</p>
-                                  <p
-                                    className="truncate text-xs text-muted-foreground"
-                                    title={t('Uptime')}
-                                  >
-                                    {uptime(
-                                      Math.max(0, snapshot!.sampledAt - item.startedAt) / 1000
-                                    )}
-                                    {item.environment && (
-                                      <span className="hidden @lg/compute:inline">
-                                        {' '}
-                                        · {item.environment}
-                                      </span>
-                                    )}
-                                  </p>
-                                </div>
-                              </div>
-                              <div className="min-w-0 text-right">
-                                <p
-                                  className="whitespace-nowrap text-xs tabular-nums"
-                                  title={t('Process memory')}
-                                >
-                                  {item.memoryBytes === undefined
-                                    ? '—'
-                                    : megabytes(item.memoryBytes)}
-                                </p>
-                              </div>
-                              <div className="min-w-0 text-right">
-                                <p
-                                  className="whitespace-nowrap text-xs tabular-nums"
-                                  title={cpuDescription(item.cpuCores)}
-                                >
-                                  {cores(item.cpuCores)}
-                                </p>
-                              </div>
-                              <Button
-                                variant="ghost"
-                                size="icon-xs"
-                                className="text-muted-foreground hover:text-destructive"
-                                disabled={Boolean(stopping) || item.status === 'cleaning'}
-                                aria-expanded={
-                                  targetScope === 'kernel' && target?.[0].id === item.id
-                                }
-                                aria-label={
-                                  item.status === 'cleanup-failed'
-                                    ? t('Retry cleanup')
-                                    : t('Terminate')
-                                }
-                                title={
-                                  item.status === 'cleanup-failed'
-                                    ? t('Retry cleanup')
-                                    : t('Terminate')
-                                }
-                                onClick={(event) => {
-                                  event.preventDefault()
-                                  selectTarget([item], 'kernel', event.currentTarget)
+                            <Square aria-hidden="true" className="size-3.5" strokeWidth={1.7} />
+                          </Button>
+                        </ResourceActionTooltip>
+                      </header>
+                      <div
+                        id={contentId}
+                        hidden={!sessionOpen}
+                        className="mb-2 ml-3 divide-y divide-border/70 rounded-md bg-muted/35 @lg/compute:ml-7"
+                      >
+                        {sessionOpen &&
+                          items.map((item) => (
+                            <div key={item.id}>
+                              <details
+                                data-kernel-details
+                                open={expanded.has(item.id)}
+                                className="group/kernel"
+                                onToggle={(event) => {
+                                  const open = event.currentTarget.open
+                                  setExpanded((previous) => {
+                                    if (previous.has(item.id) === open) return previous
+                                    const next = new Set(previous)
+                                    if (open) next.add(item.id)
+                                    else next.delete(item.id)
+                                    return next
+                                  })
                                 }}
                               >
-                                {stopping === item.id ? (
-                                  <LoaderCircle className="size-3.5 animate-spin" />
-                                ) : (
-                                  <Square className="size-3.5" />
-                                )}
-                              </Button>
-                            </summary>
-                            {expanded.has(item.id) && (
-                              <div className="border-t border-border bg-muted/30 px-4 py-3">
-                                <div className="mb-4 grid grid-cols-2 gap-6 text-xs text-muted-foreground">
-                                  <div>
-                                    <p>{t('Memory usage')}</p>
-                                    <Sparkline
-                                      values={history.get(item.id)?.memory ?? []}
-                                      label={t('Memory usage')}
-                                    />
+                                <summary
+                                  className={`${resourceColumns} cursor-pointer list-none rounded-md px-2 py-2 outline-none hover:bg-muted/60 focus-visible:keyboard-focus [&::-webkit-details-marker]:hidden`}
+                                >
+                                  <div className="flex min-w-0 items-start gap-1.5">
+                                    <ChevronRight className="mt-0.5 size-3 shrink-0 text-muted-foreground transition-transform motion-reduce:transition-none group-open/kernel:rotate-90" />
+                                    <span
+                                      className="mt-px inline-flex size-4 shrink-0"
+                                      role="img"
+                                      aria-label={kind(item)}
+                                      title={kind(item)}
+                                    >
+                                      <span className="size-full" aria-hidden="true">
+                                        {item.kind === 'python' ? (
+                                          <PythonIcon />
+                                        ) : item.kind === 'r' ? (
+                                          <RIcon />
+                                        ) : item.kind === 'repl' ? (
+                                          <FileCode2 className="size-full text-primary" />
+                                        ) : (
+                                          <Terminal className="size-full text-muted-foreground" />
+                                        )}
+                                      </span>
+                                    </span>
+                                    <div className="min-w-0">
+                                      <p
+                                        className="truncate text-sm leading-5"
+                                        title={item.environment ?? kind(item)}
+                                      >
+                                        {kind(item)}
+                                        {item.environment && (
+                                          <span className="text-xs text-muted-foreground">
+                                            {` · ${item.environment}`}
+                                          </span>
+                                        )}
+                                      </p>
+                                      <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs leading-4 text-muted-foreground">
+                                        <span
+                                          className="inline-flex items-center gap-1 data-[state=running]:text-status-success-foreground data-[state=timed-out]:text-status-warning-foreground dark:data-[state=running]:text-status-success-dark-foreground dark:data-[state=timed-out]:text-status-warning-dark-foreground"
+                                          data-state={
+                                            item.canForceClose ? 'timed-out' : item.status
+                                          }
+                                        >
+                                          <span
+                                            aria-hidden="true"
+                                            className="size-1.5 shrink-0 rounded-full bg-current opacity-75"
+                                          />
+                                          {status(item)}
+                                        </span>
+                                        <span
+                                          className="inline-flex items-center gap-1 whitespace-nowrap"
+                                          title={t('Uptime')}
+                                        >
+                                          <Clock3 className="size-3" aria-hidden="true" />
+                                          {uptime(
+                                            Math.max(
+                                              0,
+                                              (snapshot?.sampledAt ?? item.startedAt) -
+                                                item.startedAt
+                                            ) / 1000
+                                          )}
+                                        </span>
+                                      </div>
+                                    </div>
                                   </div>
-                                  <div>
-                                    <p>{t('CPU usage')}</p>
-                                    <Sparkline
-                                      values={history.get(item.id)?.cpu ?? []}
-                                      label={t('CPU usage')}
-                                    />
-                                  </div>
-                                </div>
-                                {expanded.has(item.id) &&
-                                  (item.lastCell ? (
-                                    <ComputeCellPreview
-                                      code={item.lastCell.code}
-                                      kind={item.kind}
-                                      truncated={item.lastCell.truncated}
-                                    />
-                                  ) : (
-                                    <p className="mb-4 text-xs text-muted-foreground">
-                                      {item.hasLastCell ? t('Loading…') : t('No cell executed yet')}
+                                  <div className="min-w-0 text-right">
+                                    <p
+                                      className="whitespace-nowrap text-xs tabular-nums"
+                                      title={t('Process memory')}
+                                    >
+                                      {item.memoryBytes === undefined
+                                        ? '—'
+                                        : megabytes(item.memoryBytes)}
                                     </p>
-                                  ))}
-                                {item.processes.length > 0 && (
-                                  <>
-                                    <div className="mb-3 flex flex-wrap justify-between gap-2 text-xs text-muted-foreground">
-                                      <span>
-                                        {t('Process tree')} · {item.processes.length}
-                                      </span>
-                                      <span>
-                                        {t('Started')} · {formatDateTime(item.startedAt)}
-                                      </span>
+                                  </div>
+                                  <div className="min-w-0 text-right">
+                                    <p
+                                      className="whitespace-nowrap text-xs tabular-nums"
+                                      title={cpuDescription(item.cpuCores)}
+                                    >
+                                      {cores(item.cpuCores)}
+                                    </p>
+                                  </div>
+                                  <ResourceActionTooltip
+                                    label={item.canForceClose ? undefined : stopLabel}
+                                  >
+                                    <Button
+                                      type="button"
+                                      variant={item.canForceClose ? 'destructive' : 'ghost'}
+                                      size={item.canForceClose ? 'xs' : 'icon-sm'}
+                                      className={
+                                        item.canForceClose
+                                          ? 'h-auto min-h-7 max-w-full justify-self-end whitespace-normal [overflow-wrap:anywhere]'
+                                          : resourceStopIconClassName
+                                      }
+                                      aria-label={
+                                        !item.canForceClose && stopping !== item.id
+                                          ? stopLabel
+                                          : undefined
+                                      }
+                                      disabled={
+                                        Boolean(stopping) ||
+                                        item.status === 'cleaning' ||
+                                        Boolean(group?.operationId)
+                                      }
+                                      aria-expanded={
+                                        !item.canForceClose ? target?.id === item.id : undefined
+                                      }
+                                      onClick={(event) => {
+                                        event.preventDefault()
+                                        if (item.canForceClose) void terminate(item, true)
+                                        else selectTarget(item, event.currentTarget)
+                                      }}
+                                    >
+                                      {stopping === item.id ? (
+                                        <LoaderCircle
+                                          className="size-3.5 animate-spin"
+                                          aria-label={t('Cleaning up')}
+                                        />
+                                      ) : item.canForceClose ? (
+                                        t('Force close')
+                                      ) : (
+                                        <Square
+                                          aria-hidden="true"
+                                          className="size-3.5"
+                                          strokeWidth={1.7}
+                                        />
+                                      )}
+                                    </Button>
+                                  </ResourceActionTooltip>
+                                </summary>
+                                {expanded.has(item.id) && (
+                                  <div className="mx-2 border-t border-border px-1 pt-3 pb-3">
+                                    <div className="mb-3 grid grid-cols-2 gap-2 text-[11px] text-muted-foreground">
+                                      <div className="min-w-0 rounded-md border border-border bg-card px-2 py-1.5">
+                                        <p>{t('Memory usage')}</p>
+                                        <Sparkline
+                                          values={history.get(item.id)?.memory ?? []}
+                                          label={t('Memory usage')}
+                                          tone="memory"
+                                        />
+                                      </div>
+                                      <div className="min-w-0 rounded-md border border-border bg-card px-2 py-1.5">
+                                        <p>{t('CPU usage')}</p>
+                                        <Sparkline
+                                          values={history.get(item.id)?.cpu ?? []}
+                                          label={t('CPU usage')}
+                                          tone="cpu"
+                                        />
+                                      </div>
                                     </div>
-                                    <div className="overflow-x-auto">
-                                      <table className="min-w-[26rem] w-full table-fixed text-left text-xs tabular-nums">
-                                        <thead className="text-muted-foreground">
-                                          <tr>
-                                            <th className="w-20 pb-2 pr-3 font-medium">
-                                              {t('Process ID')}
-                                            </th>
-                                            <th className="pb-2 font-medium">
-                                              {t('Process tree')}
-                                            </th>
-                                            <th className="w-28 pb-2 text-right font-medium whitespace-nowrap">
-                                              {t('Process memory')}
-                                            </th>
-                                            <th className="w-20 pb-2 text-right font-medium">
-                                              {t('CPU cores')}
-                                            </th>
-                                          </tr>
-                                        </thead>
-                                        <tbody>
-                                          {item.processes.map((child) => (
-                                            <tr key={child.pid}>
-                                              <td className="py-1 font-mono">{child.pid}</td>
-                                              <td className="truncate py-1 pr-3">
-                                                {child.command || kind(item)}
-                                              </td>
-                                              <td className="py-1 text-right">
-                                                {child.memoryBytes === undefined
-                                                  ? '—'
-                                                  : megabytes(child.memoryBytes)}
-                                              </td>
-                                              <td
-                                                className="py-1 text-right"
-                                                title={cpuDescription(child.cpuCores)}
-                                              >
-                                                {cores(child.cpuCores)}
-                                              </td>
-                                            </tr>
-                                          ))}
-                                        </tbody>
-                                      </table>
-                                    </div>
-                                  </>
+                                    {item.lastCell ? (
+                                      <ComputeCellPreview
+                                        code={item.lastCell.code}
+                                        kind={item.kind}
+                                        truncated={item.lastCell.truncated}
+                                      />
+                                    ) : (
+                                      <p className="mb-4 text-xs text-muted-foreground">
+                                        {item.hasLastCell
+                                          ? t('Loading…')
+                                          : t('No cell executed yet')}
+                                      </p>
+                                    )}
+                                    {item.processes.length > 0 && (
+                                      <>
+                                        <div className="mb-2 flex flex-wrap justify-between gap-2 text-xs text-muted-foreground">
+                                          <span className="font-medium text-foreground">
+                                            {t('Process tree')} · {item.processes.length}
+                                          </span>
+                                          <span>
+                                            {t('Started')} · {formatDateTime(item.startedAt)}
+                                          </span>
+                                        </div>
+                                        <div className="overflow-x-auto">
+                                          <table className="w-full table-fixed text-left text-[11px] tabular-nums">
+                                            <thead className="text-muted-foreground">
+                                              <tr>
+                                                <th className="w-12 border-t border-border py-1 pr-1 font-medium @md/compute:w-16">
+                                                  {t('Process ID')}
+                                                </th>
+                                                <th className="border-t border-border py-1 font-medium">
+                                                  {t('Process tree')}
+                                                </th>
+                                                <th className="w-16 border-t border-border py-1 text-right font-medium @md/compute:w-20">
+                                                  {t('Process memory')}
+                                                </th>
+                                                <th className="w-14 border-t border-border py-1 text-right font-medium @md/compute:w-16">
+                                                  {t('CPU cores')}
+                                                </th>
+                                              </tr>
+                                            </thead>
+                                            <tbody>
+                                              {item.processes.map((child) => (
+                                                <tr
+                                                  key={child.pid}
+                                                  className="border-t border-border"
+                                                >
+                                                  <td className="py-1 font-mono">{child.pid}</td>
+                                                  <td className="py-1 pr-1 [overflow-wrap:anywhere]">
+                                                    {child.command || kind(item)}
+                                                  </td>
+                                                  <td className="py-1 text-right">
+                                                    {child.memoryBytes === undefined
+                                                      ? '—'
+                                                      : megabytes(child.memoryBytes)}
+                                                  </td>
+                                                  <td
+                                                    className="py-1 text-right"
+                                                    title={cpuDescription(child.cpuCores)}
+                                                  >
+                                                    {cores(child.cpuCores)}
+                                                  </td>
+                                                </tr>
+                                              ))}
+                                            </tbody>
+                                          </table>
+                                        </div>
+                                      </>
+                                    )}
+                                  </div>
                                 )}
-                              </div>
-                            )}
+                              </details>
+                              {target?.id === item.id && terminationForm}
+                            </div>
+                          ))}
+                        {sessionOpen && other.length > 0 && (
+                          <details className="group/other">
+                            <summary className="flex cursor-pointer list-none items-center gap-1.5 rounded-md px-2 py-2 text-xs text-muted-foreground hover:bg-muted/60 focus-visible:keyboard-focus [&::-webkit-details-marker]:hidden">
+                              <ChevronRight
+                                className="size-3 transition-transform motion-reduce:transition-none group-open/other:rotate-90"
+                                aria-hidden="true"
+                              />
+                              {t('Other resources')} ({other.length})
+                            </summary>
+                            <ul className="mx-2 divide-y divide-border/70 border-t border-border/70 text-xs">
+                              {other.map((resource) => (
+                                <ResourceDetails
+                                  key={resource.id}
+                                  resource={resource}
+                                  observedAt={
+                                    resourceSnapshots.get(scope.projectId)?.observedAt ?? 0
+                                  }
+                                />
+                              ))}
+                            </ul>
                           </details>
-                          {targetScope === 'kernel' &&
-                            target?.[0].id === item.id &&
-                            terminationForm}
-                        </div>
-                      ))}
-                  </div>
-                </section>
-              ))}
+                        )}
+                      </div>
+                    </section>
+                  )
+                })}
             </div>
           </div>
-          <footer className="space-y-2 pt-3 text-xs text-muted-foreground">
+          {[...resourceSnapshots].map(([id, { value, observedAt }]) => (
+            <NotebookResourcePanel
+              key={id}
+              isActive={isActive}
+              projectId={id}
+              snapshot={value}
+              observedAt={observedAt}
+              backgroundRuns={[]}
+              refresh={() => {
+                unsettledProjects.current.add(id)
+                refreshResources(id, true)
+              }}
+              goToSession={(sessionId) => openSession(id, sessionId)}
+              desktop={{
+                hidden: !allProjects && id !== projectId,
+                sessionTitles,
+                confirmation: confirmation?.projectId === id ? confirmation : undefined,
+                closeConfirmation: () => setConfirmation(undefined),
+                restoreConfirmationFocus: (event) => {
+                  event.preventDefault()
+                  if (!active.current) return
+                  const trigger = sessionStopTrigger.current
+                  const focusTarget =
+                    trigger?.isConnected && !trigger.disabled ? trigger : allProjectsButton.current
+                  focusTarget?.focus()
+                }
+              }}
+            />
+          ))}
+          <footer className="space-y-2 py-1.5 text-xs text-muted-foreground">
             {snapshot && (!snapshot.processMetricsAvailable || host?.platform === 'win32') && (
               <p className="text-xs text-muted-foreground">
                 {!snapshot.processMetricsAvailable
@@ -919,25 +1151,23 @@ export function ComputeProcessMonitor({
               </p>
             )}
             <div className="flex justify-end">
-              <TooltipProvider>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button variant="ghost" size="sm" className="text-xs text-muted-foreground">
-                      <Info className="size-3.5" />
-                      {t('About monitoring')}
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent>
-                    {t(
-                      'Process memory is estimated for each tree. Processes from previous app runs are not listed.'
-                    )}
-                  </TooltipContent>
-                </Tooltip>
-              </TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button variant="ghost" size="sm" className="text-xs text-muted-foreground">
+                    <Info className="size-3.5" />
+                    {t('About monitoring')}
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  {t(
+                    'Process memory is estimated for each tree. Processes from previous app runs are not listed.'
+                  )}
+                </TooltipContent>
+              </Tooltip>
             </div>
           </footer>
         </div>
       </ComputePanel>
-    </ActionMenuProvider>
+    </TooltipProvider>
   )
 }

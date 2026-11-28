@@ -661,8 +661,15 @@ export class NotebookSessionAggregate<
         laneKey: notebookLaneKey(this.lane),
         executorGeneration: generation,
         ...(ownedSlot?.cleanupResource ? { phase: 'cleanup-pending' as const } : {}),
-        release: async () => {
-          const result = await resource.release()
+        retainForRelease: () => {
+          if (ownedSlot && this.kernelEpochs.get(ownedSlot.ownership.processKey) === ownedSlot)
+            ownedSlot.cleanupResource = resource
+        },
+        release: async (force) => {
+          if (ownedSlot && this.kernelEpochs.get(ownedSlot.ownership.processKey) === ownedSlot) {
+            ownedSlot.cleanupResource = resource
+          }
+          const result = await resource.release(force)
           const currentSlot = resource.processKey
             ? this.kernelEpochs.get(resource.processKey)
             : undefined

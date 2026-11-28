@@ -771,6 +771,8 @@ export type AcpPromptRequest = {
   permissionPrompts?: 'none'
   sessionId: string
   text: string
+  /** Backend refusal observed by the human composer before any queue or IPC dispatch. */
+  notebookSubmission?: { refusalId: string; sessionId: string; messageBranchId?: string }
   // Renderer-owned Session preference. Main still applies the higher-priority global Memory gate.
   memoryEnabled?: boolean
   // Closed, application-owned behavior requested for this Conversation Turn only.

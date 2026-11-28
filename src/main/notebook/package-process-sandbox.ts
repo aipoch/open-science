@@ -393,19 +393,38 @@ export const sandboxedPackageSpawn =
       }
       const childCleanup = environmentChildCleanup(error)
       if (childCleanup && error instanceof Error) {
+        const hasLiveChild = childCleanup.hasLiveChild
+        const requestNativeTermination = sandboxed.requestProcessTreeTermination
+        const processControl =
+          platform === 'win32' &&
+          hasLiveChild &&
+          requestNativeTermination &&
+          sandboxed.confirmProcessTreeTermination
+            ? {
+                // The tracked child is the original supervisor; only its Job can answer this request.
+                hasLiveProcess: () => !processesTerminated && hasLiveChild(),
+                forceClose: async () => {
+                  if (!processesTerminated && (await requestNativeTermination().catch(() => false)))
+                    processesTerminated = true
+                }
+              }
+            : undefined
         retainEnvironmentChildCleanup(error, {
-          identity: childCleanup.identity,
-          startedAt: childCleanup.startedAt,
+          ...childCleanup,
+          ...(processControl ? { processControl } : {}),
           release: async () => {
             let failure: unknown
             if (!processesTerminated) {
-              processesTerminated = await childCleanup.release().then(
-                ({ reaped }) => reaped,
-                (error: unknown) => {
-                  failure = error
-                  return false
-                }
-              )
+              if (processControl) await processControl.forceClose()
+              else {
+                processesTerminated = await childCleanup.release().then(
+                  ({ reaped }) => reaped,
+                  (error: unknown) => {
+                    failure = error
+                    return false
+                  }
+                )
+              }
             }
             const cleaned = await sandboxed.cleanup('spawn-failed', {
               processesTerminated,

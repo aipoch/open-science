@@ -15,6 +15,7 @@ import {
 } from '../../../../shared/annotations'
 import type { PermissionProfileId } from '../../../../shared/permission-profiles'
 import { VISION_MODEL_NOT_CONFIGURED_MESSAGE } from '../../../../shared/failure/messages'
+import type { NotebookExecutionRefusal } from '../../../../shared/execution-recovery'
 import {
   normalizeDelegationPolicy,
   type DelegationPolicy
@@ -407,6 +408,51 @@ const useWorkspaceConversationController = (
   const cancelledInFlightSessionRef = useRef<string | undefined>(undefined)
   const { activeSession, cancelInFlightRun, promptInFlightSessionIds, runtime } = options
   const activeSessionId = activeSession?.id
+  const notebookRefusals = useRef(new Map<string, NotebookExecutionRefusal>())
+  const { projectId, isPersistenceReady } = options
+  useEffect(() => {
+    const api = globalThis.window?.api?.notebook
+    if (!projectId || !api || !isPersistenceReady) return
+    const markers = new Map<string, NotebookExecutionRefusal>()
+    notebookRefusals.current = markers
+    let active = true
+    let generation: string | undefined
+    let retry: ReturnType<typeof setTimeout> | undefined
+    const retiredGenerations = new Set<string>()
+    const remember = (refusal: NotebookExecutionRefusal): void => {
+      if (refusal.projectId !== projectId || retiredGenerations.has(refusal.generation)) return
+      if (refusal.generation !== generation) {
+        if (generation) retiredGenerations.add(generation)
+        generation = refusal.generation
+        markers.clear()
+      }
+      if (refusal.order > (markers.get(refusal.sessionId)?.order ?? 0))
+        markers.set(refusal.sessionId, refusal)
+    }
+    const unsubscribe = api.onExecutionRefused?.(remember)
+    const hydrate = (retryDelay = 1_000): void => {
+      const generationAtRequest = generation
+      void api
+        .getProjectActivity?.({ projectId })
+        .then((activity) => {
+          if (!active) return
+          for (const refusal of activity.executionRefusals ?? []) {
+            if (generation === generationAtRequest || refusal.generation === generation)
+              remember(refusal)
+          }
+        })
+        .catch(() => {
+          if (active) retry = setTimeout(() => hydrate(Math.min(retryDelay * 2, 5_000)), retryDelay)
+        })
+    }
+    hydrate()
+    return () => {
+      active = false
+      clearTimeout(retry)
+      unsubscribe?.()
+      markers.clear()
+    }
+  }, [projectId, isPersistenceReady])
   useEffect(() => {
     if (!cancelInFlightRun) {
       cancelledInFlightSessionRef.current = undefined
@@ -467,6 +513,17 @@ const useWorkspaceConversationController = (
       const current = optionsRef.current
       const { activeSession, composer, session, runtime } = current
       if (!current.agentConfiguration) return
+      const graph = activeSession?.conversationGraph
+      const refusal = activeSession && notebookRefusals.current.get(activeSession.id)
+      const notebookSubmission =
+        activeSession && refusal?.projectId === current.projectId
+          ? {
+              refusalId: refusal.refusalId,
+              sessionId: activeSession.id,
+              messageBranchId: graph?.frames.find(({ id }) => id === graph.activeFrameId)
+                ?.activeBranchId
+            }
+          : undefined
       const reconfigureRetry = mode === 'retry-reconfigure'
       if (reconfigureRetry && !session.actions.beginReconfigureRetry()) return
       const queueDraft = mode === 'continue' && canQueueDraft(current)
@@ -513,6 +570,7 @@ const useWorkspaceConversationController = (
             session: activeSession,
             snapshot,
             text: docToText(snapshot.doc),
+            notebookSubmission,
             forcedSkillIds,
             permissionProfile: current.permissionProfile,
             agentConfiguration: current.agentConfiguration,
@@ -654,6 +712,7 @@ const useWorkspaceConversationController = (
         void runtime
           .sendMessage({
             sessionId,
+            notebookSubmission: mode === 'continue' && !retryOwner ? notebookSubmission : undefined,
             onPromptAccepted: acceptDraft,
             onMessageAppended: (message) => {
               consumePdfProseReading()

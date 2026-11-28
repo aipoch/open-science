@@ -353,6 +353,7 @@ const publicShellResult = (
   executionStarted: run.executionStarted,
   kernelDispatched: run.kernelDispatched,
   ...(run.shellRuntimeStatus ? { runtimeStatus: run.shellRuntimeStatus } : {}),
+  runId: run.runId,
   ...(run.shellErrorCode ? { errorCode: run.shellErrorCode } : {}),
   ...(run.recovery ? { recovery: run.recovery } : {}),
   ...((live ? live.truncated : run.truncated) ? { truncated: true } : {})

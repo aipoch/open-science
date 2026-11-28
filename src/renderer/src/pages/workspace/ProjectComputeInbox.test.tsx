@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
+import { within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest'
 
 import { createI18nTestStub } from '../../../../../test/i18n-test-stub'
@@ -226,6 +227,7 @@ describe('Project Compute inbox', () => {
   })
 
   it('shows every environment with all managed background Runs in its Session', async () => {
+    document.documentElement.setAttribute(WEB_CALLER_LOCATION_ATTRIBUTE, 'remote')
     const getProjectActivity = vi.fn().mockResolvedValue({
       kernels: [
         {
@@ -479,7 +481,8 @@ describe('Project Compute inbox', () => {
     })
   })
 
-  it('presents responsive Compute rows and navigates to each Kernel or Job Session', async () => {
+  it('opens the sessions for remote Kernels and Compute Jobs', async () => {
+    document.documentElement.setAttribute(WEB_CALLER_LOCATION_ATTRIBUTE, 'remote')
     vi.useFakeTimers({ shouldAdvanceTime: true })
     vi.setSystemTime(new Date('2026-09-07T08:00:00.000Z'))
     const openSession = vi.fn()
@@ -519,24 +522,14 @@ describe('Project Compute inbox', () => {
     await act(async () => root?.render(<ProjectComputeInbox />))
     await vi.waitFor(() => expect(container.textContent).toContain('Fit remote model'))
 
-    expect(
-      Array.from(container.querySelectorAll('[role="columnheader"]'), (cell) => cell.textContent)
-    ).toEqual(['Task', 'Session', 'Target', 'Status', 'Updated'])
-    const navigationButtons = Array.from(
-      container.querySelectorAll<HTMLButtonElement>('button[aria-label="Go to Session"]')
-    )
-    expect(navigationButtons).toHaveLength(2)
-    expect(navigationButtons.every((button) => button.title === 'Go to Session')).toBe(true)
-    expect(navigationButtons.every((button) => button.textContent === '')).toBe(true)
-    const jobDetails = container
-      .querySelector('[role="columnheader"]')
-      ?.closest('section')
-      ?.querySelector('details')
-    expect(jobDetails?.open).toBe(false)
-    act(() => jobDetails?.querySelector('summary')?.click())
-    expect(jobDetails?.open).toBe(true)
-    act(() => navigationButtons[0]?.click())
-    act(() => navigationButtons[1]?.click())
+    const kernels = within(container).getByRole('region', { name: /^Active kernels/ })
+    const jobs = within(container).getByRole('region', { name: 'Compute jobs' })
+    const jobDetails = jobs.querySelector('details')!
+    expect(jobDetails.open).toBe(false)
+    act(() => jobDetails.querySelector('summary')!.click())
+    expect(jobDetails.open).toBe(true)
+    act(() => within(kernels).getByRole('button', { name: 'Go to Session' }).click())
+    act(() => within(jobs).getByRole('button', { name: 'Go to Session' }).click())
     expect(openSession).toHaveBeenNthCalledWith(1, 'project-1', 'session-current', 'user')
     expect(openSession).toHaveBeenNthCalledWith(2, 'project-1', 'session-attention', 'user')
     expect(jobsList).toHaveBeenCalledWith({
@@ -651,6 +644,7 @@ describe('Project Compute inbox', () => {
   )
 
   it('refreshes Kernel and Compute Job queries only from their matching Project events', async () => {
+    document.documentElement.setAttribute(WEB_CALLER_LOCATION_ATTRIBUTE, 'remote')
     const calls: string[] = []
     let notebookChanged: ((event: { projectId: string }) => void) | undefined
     let jobUpdated: ((job: { project_id?: string }) => void) | undefined

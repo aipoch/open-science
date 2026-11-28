@@ -70,13 +70,22 @@ describe('Notebook application composition', () => {
     const callbacks = runtimeConstruction.options?.callbacks
     const available = { sessionId: 'session-1', kernels: ['python'] } as never
     const changed = { sessionId: 'session-1', revision: 2 } as never
+    const refusal = {
+      projectId: 'Open-Science',
+      sessionId: 'session-1',
+      refusalId: 'refusal-1',
+      generation: 'backend-1',
+      order: 1
+    }
 
     callbacks?.onNotebookAvailable?.(available)
     callbacks?.onNotebookChanged?.(changed)
+    callbacks?.onExecutionRefused?.(refusal)
 
     expect(publish.mock.calls).toEqual([
       ['notebook:available', available],
-      ['notebook:changed', changed]
+      ['notebook:changed', changed],
+      ['notebook:execution-refused', refusal]
     ])
   })
 

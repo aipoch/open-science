@@ -39,7 +39,11 @@ import type { KernelProcessLifecycleOwner } from './kernel-process-lifecycle.win
 import type { NotebookExecutionOwner } from './execution-owner'
 import { assertResearchSessionWritable } from '../storage/session-package-state'
 import type { IdleInterpreter } from './idle-reclamation'
-import type { NotebookOwnedResource } from './owned-resources'
+import {
+  releaseNotebookResources,
+  type NotebookOwnedResource,
+  type NotebookResourceCleanupResult
+} from './owned-resources'
 
 type RuntimeSession = NotebookSessionAggregate
 type PendingOperation<Result> = Promise<Result> & { resource: NotebookOwnedResource }
@@ -124,7 +128,7 @@ const kernelInstanceForProcessKey = (processKey: string): NotebookKernelInstance
 // Orchestrates one Registry generation without duplicating Registry or Aggregate state.
 class NotebookSessionLifecycleOwner {
   private readonly idleTeardowns = new Map<string, Promise<boolean>>()
-  private readonly retainedReleaseHolds = new Set<string>()
+  private readonly retainedReleaseHolds = new Map<string, 'release' | 'stop-process'>()
   private readonly retainedReleases = new Map<
     string,
     { projectId: string; sessionId: string; operation: Promise<void> }
@@ -145,14 +149,21 @@ class NotebookSessionLifecycleOwner {
     return this.idleTeardowns.has(scope.sessionId) ? 'cleanup-in-progress' : undefined
   }
 
-  holdSessionResources(scope: { projectId: string; sessionId: string }): () => void {
+  holdSessionResources(
+    scope: { projectId: string; sessionId: string },
+    kind: 'release' | 'stop-process' = 'release'
+  ): () => void {
     const key = JSON.stringify([scope.projectId, scope.sessionId])
     this.assertScopeAvailable(scope.projectId, scope.sessionId)
-    if (this.shutdownAllPromise || this.idleTeardowns.has(scope.sessionId))
+    if (
+      this.shutdownAllPromise ||
+      this.idleTeardowns.has(scope.sessionId) ||
+      this.retainedReleaseHolds.has(key)
+    )
       throw new Error(
         'Notebook teardown is already in progress. Refresh before releasing resources.'
       )
-    this.retainedReleaseHolds.add(key)
+    this.retainedReleaseHolds.set(key, kind)
     return () => this.retainedReleaseHolds.delete(key)
   }
 
@@ -206,7 +217,8 @@ class NotebookSessionLifecycleOwner {
             this.notifyChanged(session)
           })
         ),
-      ...Array.from(pending, ({ resource }) => resource).filter(matches)
+      ...Array.from(pending, ({ resource }) => resource).filter(matches),
+      ...[...this.retainedOperationResources].filter(matches)
     ]
   }
 
@@ -327,6 +339,7 @@ class NotebookSessionLifecycleOwner {
   >()
   private readonly pendingOperationsByProject = new Map<string, Set<PendingOperation<unknown>>>()
   private readonly pendingOperationsBySession = new Map<string, Set<PendingOperation<unknown>>>()
+  private readonly retainedOperationResources = new Set<NotebookOwnedResource>()
   private readonly operationAbortControllersByProject = new Map<string, Set<AbortController>>()
   private readonly operationAbortControllersBySession = new Map<string, Set<AbortController>>()
   private terminal = false
@@ -504,12 +517,18 @@ class NotebookSessionLifecycleOwner {
   runProjectOperation<Result>(
     request: NotebookSessionRequest,
     operation: (deletionSignal: AbortSignal) => Promise<Result>,
-    trackActivity = true
+    trackActivity = true,
+    resource?: Pick<NotebookOwnedResource, 'group' | 'kind' | 'hasLiveProcess'> & {
+      hasPendingCleanup?: () => boolean
+      cleanup: (force?: boolean) => Promise<NotebookResourceCleanupResult>
+    }
   ): Promise<Result> {
     if (trackActivity) this.options.onActivityChanged?.(request.sessionId)
     const idleTeardown = this.idleTeardowns.get(request.sessionId)
     if (idleTeardown)
-      return idleTeardown.then(() => this.runProjectOperation(request, operation, trackActivity))
+      return idleTeardown.then(() =>
+        this.runProjectOperation(request, operation, trackActivity, resource)
+      )
     const projectId = resolveProjectId(request, this.options.defaultProjectId)
     let releaseAdmission: (() => void) | undefined
     try {
@@ -540,19 +559,27 @@ class NotebookSessionLifecycleOwner {
       resolveRunning = resolve
       rejectRunning = reject
     }) as PendingOperation<Result>
+    let reaped = false
     running.resource = {
       identity: running,
-      group: 'operation',
-      kind: 'session-work',
+      group: resource?.group ?? 'operation',
+      kind: resource?.kind ?? 'session-work',
+      hasLiveProcess: resource?.hasLiveProcess,
       phase: 'running',
       startedAt: Date.now(),
       projectId,
       sessionId: request.sessionId,
       laneKey: notebookLaneKey(this.laneForRequest(request)),
-      release: async () => {
+      release: async (force) => {
         controller.abort(new Error('Notebook operation was released.'))
         await running.catch(() => undefined)
-        return { reaped: true }
+        const result = resource ? await resource.cleanup(force) : { reaped: true }
+        if (result.reaped) {
+          reaped = true
+          if (this.retainedOperationResources.delete(running.resource))
+            this.options.onActivityChanged?.(request.sessionId)
+        }
+        return result
       }
     }
     const pending =
@@ -597,6 +624,10 @@ class NotebookSessionLifecycleOwner {
           this.pendingOperationsBySession.get(request.sessionId) === sessionPending
         ) {
           this.pendingOperationsBySession.delete(request.sessionId)
+        }
+        if (!reaped && resource?.hasPendingCleanup?.()) {
+          running.resource.phase = 'cleanup-pending'
+          this.retainedOperationResources.add(running.resource)
         }
         this.options.onActivityChanged?.(trackActivity ? request.sessionId : undefined)
         releaseObservation?.()
@@ -732,10 +763,14 @@ class NotebookSessionLifecycleOwner {
         const lanes = Array.from(this.options.sessions.values())
           .filter((session) => session.sessionId === sessionId)
           .map((session) => session.lane)
-        const results = await Promise.allSettled(lanes.map((lane) => this.shutdownLane(lane)))
-        const failures = results.flatMap((result) =>
-          result.status === 'rejected' ? [result.reason] : []
-        )
+        const [results, installerFailures] = await Promise.all([
+          Promise.allSettled(lanes.map((lane) => this.shutdownLane(lane))),
+          this.releaseInstallers({ sessionId })
+        ])
+        const failures = [
+          ...results.flatMap((result) => (result.status === 'rejected' ? [result.reason] : [])),
+          ...installerFailures
+        ]
         if (failures.length > 0) {
           throw new AggregateError(failures, 'Notebook Session cleanup failed: ' + sessionId)
         }
@@ -758,10 +793,14 @@ class NotebookSessionLifecycleOwner {
         const lanes = Array.from(this.options.sessions.values())
           .filter((session) => session.projectId === projectId)
           .map((session) => session.lane)
-        const results = await Promise.allSettled(lanes.map((lane) => this.shutdownLane(lane)))
-        const failures = results.flatMap((result) =>
-          result.status === 'rejected' ? [result.reason] : []
-        )
+        const [results, installerFailures] = await Promise.all([
+          Promise.allSettled(lanes.map((lane) => this.shutdownLane(lane))),
+          this.releaseInstallers({ projectId })
+        ])
+        const failures = [
+          ...results.flatMap((result) => (result.status === 'rejected' ? [result.reason] : [])),
+          ...installerFailures
+        ]
         if (failures.length > 0) {
           throw new AggregateError(failures, 'Notebook Project cleanup failed: ' + projectId)
         }
@@ -824,7 +863,7 @@ class NotebookSessionLifecycleOwner {
   private assertScopeAvailable(projectId: string, sessionId: string): void {
     if (this.terminal) throw new Error('Notebook runtime is disposed.')
     this.assertDeletionAvailable(projectId, sessionId)
-    if (this.retainedReleaseHolds.has(JSON.stringify([projectId, sessionId])))
+    if (this.retainedReleaseHolds.get(JSON.stringify([projectId, sessionId])) === 'release')
       throw new Error('Notebook resources are being released. Start a new execution after cleanup.')
   }
 
@@ -835,6 +874,16 @@ class NotebookSessionLifecycleOwner {
     if (this.deletingSessionIds.has(sessionId)) {
       throw new Error('Session is being deleted.')
     }
+  }
+
+  private async releaseInstallers(
+    scope: { projectId?: string; sessionId?: string } = {}
+  ): Promise<unknown[]> {
+    const installers = this.resources(scope).filter(({ group }) => group === 'installer')
+    const results = await releaseNotebookResources(installers)
+    return results.flatMap(({ result }) =>
+      result.reaped ? [] : [result.error ?? new Error('Notebook installer cleanup is incomplete.')]
+    )
   }
 
   shutdownAll(afterShutdown?: () => Promise<void>): Promise<{ reaped: boolean }> {
@@ -848,7 +897,11 @@ class NotebookSessionLifecycleOwner {
     this.abortAllOperations(new Error('Notebook runtime is shutting down.'))
     const stop = (): Promise<{ reaped: boolean }> =>
       this.options.runtimeBindings.withGlobalTeardown(async () => {
-        const result = await this.options.sessions.shutdownAll()
+        const [sessions, installerFailures] = await Promise.all([
+          this.options.sessions.shutdownAll(),
+          this.releaseInstallers()
+        ])
+        const result = { reaped: sessions.reaped && installerFailures.length === 0 }
         if (afterShutdown) {
           if (!result.reaped)
             throw new Error(
@@ -871,7 +924,13 @@ class NotebookSessionLifecycleOwner {
     if (this.disposalPromise) return this.disposalPromise
     this.beginDisposal()
     const stop = (): Promise<{ reaped: boolean }> =>
-      this.options.runtimeBindings.withGlobalTeardown(() => this.options.sessions.dispose())
+      this.options.runtimeBindings.withGlobalTeardown(async () => {
+        const [sessions, installerFailures] = await Promise.all([
+          this.options.sessions.dispose(),
+          this.releaseInstallers()
+        ])
+        return { reaped: sessions.reaped && installerFailures.length === 0 }
+      })
     const disposal = this.waitForSessionTeardown().then(stop)
     this.disposalPromise = disposal
     return disposal

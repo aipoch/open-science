@@ -1,3 +1,4 @@
+import type { AcpPromptRequest } from '../../../../shared/acp'
 import type { SessionReadingContext } from '../../../../shared/session-reading'
 import type { PersistedConversationGraph } from '../../../../shared/conversation-graph'
 import type { Annotation } from '../../../../shared/annotation-contract'
@@ -91,6 +92,7 @@ export type MessageQueueError = {
 
 export type MessageQueueItem = {
   kind: 'user' | 'application'
+  notebookSubmission?: AcpPromptRequest['notebookSubmission']
   id: string
   sessionId: string
   agentFrameId: string

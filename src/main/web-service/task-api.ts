@@ -960,7 +960,7 @@ class HeadlessTaskApi {
       projectId: session.projectId,
       sessionId,
       promptMessageId: session.activeRun?.promptMessageId ?? latestOutcomePrompt(session)?.id,
-      includeSessionRefusal: true
+      includeSessionRefusal: 'latest'
     })
   }
 
@@ -2336,7 +2336,7 @@ class HeadlessTaskApi {
       : await this.ports.notebook.inspectTaskExecution({
           projectId: session.projectId,
           sessionId: session.id,
-          includeSessionRefusal: true
+          includeSessionRefusal: 'current'
         })
     if (!execution) return
     const { refusalId, promptMessageId, refusalReason } = execution

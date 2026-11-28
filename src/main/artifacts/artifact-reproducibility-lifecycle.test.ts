@@ -25,6 +25,7 @@ import { ReproducibilityCleanupError } from '@aipoch/reproducibility'
 import { withReproducibilityNotebookLifecycle } from './reproducibility-notebook-lifecycle'
 import { SessionDeletionOwner } from '../session-deletion/owner'
 import { NotebookExecutionIntent } from '../notebook/execution-intent'
+import { NotebookResourceReleaseOwner } from '../notebook/resource-release'
 import {
   ArtifactReproducibilityAttemptOwner,
   type ArtifactReproducibilityAttemptOwnerDependencies
@@ -221,6 +222,113 @@ describe('reproducibility resource lifecycle', () => {
     expect(execute).toHaveBeenCalledOnce()
     await owner.dispose()
   })
+
+  it.each([
+    ['captured', 'released'],
+    ['retained while draining', 'released'],
+    ['captured', 'released after retrying child files'],
+    ['retained while draining', 'partial with files pending']
+  ] as const)(
+    'settles the original release with an installer %s as %s',
+    async (timing, outcome) => {
+      const started = deferred()
+      let live = true
+      const finished = outcome !== 'partial with files pending'
+      let filesBlocked = !finished
+      const releaseInstaller = vi.fn(async () => ({
+        reaped: !live && !filesBlocked,
+        processesTerminated: !live,
+        temporaryResourcesRemoved: !live && !filesBlocked
+      }))
+      const force = vi.fn(async () => {
+        live = false
+        if (outcome === 'released after retrying child files')
+          releaseInstaller.mockResolvedValueOnce({
+            reaped: false,
+            processesTerminated: true,
+            temporaryResourcesRemoved: false
+          })
+      })
+      const installer = {
+        identity: {},
+        startedAt: 123,
+        processControl: { hasLiveProcess: () => live, forceClose: force },
+        release: releaseInstaller
+      }
+      const removeAttemptRoot = vi.fn()
+      const retainedCleanup = vi.fn(async () => {
+        const result = await installer.release()
+        if (result.reaped) removeAttemptRoot()
+        return result
+      })
+      const execute = vi.fn<
+        NonNullable<ArtifactReproducibilityAttemptOwnerDependencies['execute']>
+      >(async (input) => {
+        started.resolve()
+        if (timing === 'retained while draining') {
+          await new Promise<void>((resolve) => {
+            input.signal!.addEventListener('abort', () => resolve(), { once: true })
+          })
+        }
+        input.onCleanupRetained?.(retainedCleanup, installer)
+        throw new Error(CHILD_UNCONFIRMED)
+      })
+      const owner = createOwner({ execute })
+      let operation: Promise<void> | undefined
+      const unlock = vi.fn()
+      const hold = vi.fn(() => unlock)
+      const releaseOwner = new NotebookResourceReleaseOwner({
+        resources: (scope) => owner.resources(scope),
+        hold,
+        observe: (_scope, active) => {
+          operation = active
+        },
+        block: () => [],
+        decisions: () => [],
+        changed: () => undefined,
+        blockedReason: () => undefined,
+        logger: diagnosticLog
+      })
+      const scope = { projectId: request.projectId, sessionId: request.appSessionId }
+      try {
+        owner.start(request, 1, vi.fn())
+        await started.promise
+        if (timing === 'captured')
+          await vi.waitFor(() => expect(owner.getCheck(request, 1)?.status).toBe('failed'))
+        const [group] = (await releaseOwner.project(scope.projectId)).groups
+        expect(group.resources.map(({ group }) => group)).toEqual(
+          timing === 'captured' ? ['reproduction', 'installer'] : ['reproduction']
+        )
+        const active = releaseOwner.release(
+          { ...scope, revision: group.revision, stopAll: {} },
+          () => undefined
+        )
+        await operation
+
+        expect(force).toHaveBeenCalledOnce()
+        expect(removeAttemptRoot).toHaveBeenCalledTimes(finished ? 1 : 0)
+        expect(execute).toHaveBeenCalledOnce()
+        expect(hold).toHaveBeenCalledOnce()
+        expect(unlock).toHaveBeenCalledOnce()
+        expect(owner.resources(scope).map(({ group }) => group)).toEqual(
+          finished ? [] : ['reproduction', 'installer']
+        )
+        expect(releaseOwner.get({ ...scope, operationId: active.operationId })).toMatchObject({
+          operationId: active.operationId,
+          phase: 'force-close',
+          status: finished ? 'released' : 'partial',
+          resources: group.resources.map(({ id }) => ({
+            id,
+            status: finished ? 'released' : 'incomplete'
+          }))
+        })
+      } finally {
+        live = false
+        filesBlocked = false
+        await owner.dispose()
+      }
+    }
+  )
 
   it('waits for an original batch to drain even when a different Attempt cleanup fails', async () => {
     const storageRoot = await mkdtemp(join(tmpdir(), 'reproduction-drain-'))

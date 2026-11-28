@@ -1,9 +1,15 @@
+import { environmentChildCleanup, type EnvironmentChildCleanup } from '@aipoch/environment'
+import type { NotebookExecutionRefusal } from '../../shared/execution-recovery'
 import type {
   NotebookMemoryPolicyState,
   NotebookMemoryPolicyStateRequest
 } from '../../shared/notebook-memory'
 import { withDataRootWrite } from '../storage/migration-state'
-import type { NotebookOwnedResource } from './owned-resources'
+import {
+  forceCloseRetainedInstaller,
+  hasVerifiedRetainedInstaller,
+  type NotebookOwnedResource
+} from './owned-resources'
 import { NotebookResourceReleaseOwner } from './resource-release'
 import type {
   NotebookProjectResources,
@@ -262,6 +268,7 @@ type NotebookMemoryRejectionContext = Pick<NotebookSessionReference, 'projectId'
   terminalTarget?: string
 }
 type NotebookRuntimeServiceCallbacks = NotebookSessionLifecycleCallbacks & {
+  onExecutionRefused?: (refusal: NotebookExecutionRefusal) => void
   onMemoryPolicyChanged?: (
     state: import('./memory-policy').MemoryPolicyObservation,
     hasLiveResources: boolean
@@ -532,7 +539,9 @@ const projectNotebookMemoryPolicyState = (
 
 // Coordinates notebook cells, shared interpreters, persisted run history, and UI notifications.
 class NotebookRuntimeService {
-  private readonly executionIntents = new NotebookExecutionIntentOwner()
+  private readonly executionIntents = new NotebookExecutionIntentOwner((refusal) =>
+    this.options.callbacks?.onExecutionRefused?.(refusal)
+  )
   private readonly resourceReleases: NotebookResourceReleaseOwner
 
   createExecutionIntent(scope: NotebookExecutionIntentScope): NotebookExecutionIntent {
@@ -1591,6 +1600,12 @@ class NotebookRuntimeService {
       observe: (scope, operation) => this.sessionLifecycle.observeSessionRelease(scope, operation),
       block: (scope) => this.blockExecutionIntents(scope),
       decisions: (projectId) => this.executionIntents.blockedContinuations(projectId),
+      recordStop: (request, resources, view) =>
+        this.processMonitor.recordSessionStop(
+          resources,
+          view,
+          request.stopAll?.comment?.trim() ?? ''
+        ),
       blockedReason: (scope, scopeHeld) => {
         if (options.isSessionExporting?.(scope.projectId, scope.sessionId))
           return 'session-exporting'
@@ -1636,7 +1651,7 @@ class NotebookRuntimeService {
 
   async inspectTaskExecution(
     request: NotebookExecutionIntentScope & {
-      includeSessionRefusal?: true
+      includeSessionRefusal?: 'current' | 'latest'
       taskWindow?: { startedAt: number; completedAt?: number }
     }
   ): Promise<import('../../shared/task-api').TaskNotebookExecution> {
@@ -1649,8 +1664,12 @@ class NotebookRuntimeService {
         : promptMessageId
           ? this.executionIntents.resolve(scope, promptMessageId)
           : undefined
-    // The Session can still be blocked while its latest prompt is not bound to the refusal.
-    const observedIntent = request.includeSessionRefusal && current?.refusalId ? current : intent
+    // A Session summary follows the composer marker. Task interactions keep their own refusal.
+    const currentStop = request.includeSessionRefusal && current?.refusalId ? current : undefined
+    const latestStop =
+      request.includeSessionRefusal === 'latest' ? currentStop?.latestRefusal : undefined
+    const sessionStop = latestStop && !latestStop.refusalWasContinued ? latestStop : currentStop
+    const observedIntent = sessionStop ?? intent
     const inTaskWindow = (at: number | undefined): boolean =>
       !request.taskWindow ||
       (at !== undefined &&
@@ -1688,7 +1707,7 @@ class NotebookRuntimeService {
         retryable: false
       }
     }
-    if (currentRefusal && observedIntent === current) {
+    if (currentRefusal && (observedIntent === current || observedIntent === sessionStop)) {
       return {
         ...origin,
         status: 'waiting_for_user',
@@ -1701,7 +1720,7 @@ class NotebookRuntimeService {
         next: {
           action: 'continue_notebook_in_app',
           message:
-            'Resolve the cause, then have the user open the affected Session and branch in the Open-Science desktop app connected to this service. In Compute, choose Continue Notebook work. Recheck the same Session afterward.'
+            'Resolve the cause, then have the user send a new message in the original Session and branch in Open-Science. Recheck the same Session afterward.'
         }
       }
     }
@@ -1859,16 +1878,26 @@ class NotebookRuntimeService {
       throw new Error('Invalid kernel source selection.')
     const sourceIds = new Set(request.sourceIds ?? [])
     const snapshot = await this.processMonitor.snapshot()
+    const resourceProjectIds = new Set<string>()
+    for (const { projectId, sessionId, group } of this.ownedResources())
+      if (projectId && sessionId && group !== 'operation') resourceProjectIds.add(projectId)
     return {
       ...snapshot,
+      resourceProjectIds: [...resourceProjectIds],
       instances: snapshot.instances.map(({ lastCell, ...item }) =>
         sourceIds.has(item.id) ? { ...item, lastCell } : item
       )
     }
   }
 
-  terminateMonitoredProcess(request: TerminateNotebookProcessRequest): Promise<void> {
-    return this.processMonitor.terminateRequest(request)
+  async terminateMonitoredProcess(request: TerminateNotebookProcessRequest): Promise<void> {
+    if (!request) throw new Error('Invalid Notebook process selection.')
+    const release = this.sessionLifecycle.holdSessionResources(request, 'stop-process')
+    try {
+      await this.processMonitor.terminateRequest(request)
+    } finally {
+      release()
+    }
   }
 
   manualKernelTerminations(
@@ -1897,12 +1926,12 @@ class NotebookRuntimeService {
             lane: notebookLaneKey(session.lane),
             kind,
             environment,
-            terminate: async () => {
+            terminate: async (force?: boolean) => {
               const ownsEpoch =
                 item.kernelEpochId !== undefined &&
                 this.sessions.get(session.lane) === session &&
                 session.currentKernelEpochId(item.processKey) === item.kernelEpochId
-              const stopping = item.terminate()
+              const stopping = force ? item.terminate(true) : item.terminate()
               if (!ownsEpoch) return stopping
 
               // The executor has detached the process. Invalidate its epoch before an admitted
@@ -3494,7 +3523,36 @@ class NotebookRuntimeService {
 
     // Project admission is keyed only by project identity. InstallRequest intentionally keeps the
     // session fields optional because settings and repair flows can manage a global environment.
-    return this.sessionLifecycle.runProjectOperation(request as NotebookSessionRequest, manage)
+    let unconfirmed: { error: unknown; cleanup?: EnvironmentChildCleanup } | undefined
+    return this.sessionLifecycle.runProjectOperation(
+      request as NotebookSessionRequest,
+      (releaseSignal) =>
+        this.packageOperations.manage(
+          request,
+          signal ? AbortSignal.any([signal, releaseSignal]) : releaseSignal,
+          (error) => {
+            unconfirmed = { error, cleanup: environmentChildCleanup(error) }
+          }
+        ),
+      true,
+      {
+        group: 'installer',
+        kind: 'environment-install',
+        hasLiveProcess: () => hasVerifiedRetainedInstaller(unconfirmed?.cleanup),
+        hasPendingCleanup: () => unconfirmed?.cleanup !== undefined,
+        cleanup: async (force) => {
+          if (!unconfirmed) return { reaped: true }
+          const cleanup = unconfirmed.cleanup
+          if (force && cleanup) await forceCloseRetainedInstaller(cleanup)
+          const stopped = await cleanup?.release()
+          // The process cleanup can finish while the interrupted mutation remains quarantined.
+          // Leave the runtime recovery record to its owner and report it separately from cleanup.
+          if (stopped?.reaped)
+            return { ...stopped, processesTerminated: true, environmentRecoveryRequired: true }
+          return { ...stopped, reaped: false, error: unconfirmed.error }
+        }
+      }
+    )
   }
 
   // Named-environment management (design D2), delegating to the injected provisioner-backed manager.
@@ -4064,7 +4122,12 @@ class NotebookRuntimeService {
     const backgroundRuns = Array.from(this.backgroundRuns.values(), ({ activity }) => activity)
       .filter((activity) => activity.projectId === request.projectId)
       .sort((left, right) => left.acceptedAt - right.acceptedAt)
-    return { kernels, backgroundRuns }
+    const executionRefusals = this.executionIntents.submissionRefusals(request.projectId)
+    return {
+      kernels,
+      backgroundRuns,
+      ...(executionRefusals.length ? { executionRefusals } : {})
+    }
   }
 }
 

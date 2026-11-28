@@ -251,6 +251,78 @@ describe.runIf(process.platform !== 'win32')('Notebook Session degraded recovery
     }
   }, 15_000)
 
+  it('force closes only the verified child retained by a failed startup during Stop all', async () => {
+    let failedPid: number | undefined
+    let failedReceipt: string | undefined
+    let degrade = true
+    const recordSpawned = KernelProcessLifecycleOwner.prototype.recordSpawned
+    vi.spyOn(KernelProcessLifecycleOwner.prototype, 'recordSpawned').mockImplementationOnce(
+      function (this: KernelProcessLifecycleOwner, intent, child) {
+        failedPid = child.pid
+        failedReceipt = recordSpawned.call(this, intent, child).path
+        throw new Error('registration failed after receipt publication')
+      }
+    )
+    const terminate = processTree.terminateProcessTree
+    const teardown = vi
+      .spyOn(processTree, 'terminateProcessTree')
+      .mockImplementation(async (child, signal) =>
+        degrade && child.pid === failedPid && signal !== 'SIGKILL'
+          ? { reaped: false }
+          : terminate(child, signal)
+      )
+    const { root, scope, service } = await fixture()
+    const other = { ...scope, sessionId: 'other' }
+    try {
+      await expect(
+        service.executeControl({ ...scope, code: 'console.log(1)' })
+      ).resolves.toMatchObject({
+        status: 'failed',
+        kernelDispatched: false
+      })
+      expect(failedReceipt).toBeDefined()
+      expect(existsSync(failedReceipt!)).toBe(true)
+      await expect(
+        service.executeControl({ ...other, code: 'globalThis.kept = 73' })
+      ).resolves.toMatchObject({
+        status: 'completed'
+      })
+
+      const group = (await service.getProjectResources(scope)).groups.find(
+        ({ sessionId }) => sessionId === scope.sessionId
+      )!
+      expect(group.resources).toEqual([
+        expect.objectContaining({ group: 'kernel', phase: 'cleanup-pending' })
+      ])
+      const release = await service.releaseSessionResources(
+        { ...scope, revision: group.revision, stopAll: {} },
+        () => undefined
+      )
+      await service.waitForSessionTeardown(scope)
+      expect(
+        service.getResourceRelease({ ...scope, operationId: release.operationId })
+      ).toMatchObject({
+        status: 'released',
+        phase: 'force-close',
+        resources: [{ status: 'released', processesTerminated: true }]
+      })
+      expect(
+        teardown.mock.calls.filter(([, signal]) => signal === 'SIGKILL').map(([child]) => child.pid)
+      ).toEqual([failedPid])
+      expect(existsSync(failedReceipt!)).toBe(false)
+      await expect(
+        service.executeControl({ ...other, code: 'console.log(kept)' })
+      ).resolves.toMatchObject({
+        status: 'completed',
+        stdout: '73\n'
+      })
+    } finally {
+      degrade = false
+      await service.dispose()
+      await rm(root, { recursive: true, force: true })
+    }
+  }, 15_000)
+
   it('settles a crashed run and lets the same FIFO and targeted restart proceed before tracked cleanup', async () => {
     const oldHost = firstHostPid()
     let cleanupAttempts = 0

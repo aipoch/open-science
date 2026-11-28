@@ -1,9 +1,14 @@
 // @vitest-environment jsdom
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
+import { fireEvent, screen, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { createI18nTestStub } from '../../../../../test/i18n-test-stub'
+import type {
+  NotebookProcessObservation,
+  NotebookProcessMonitorSnapshot
+} from '../../../../shared/notebook-process-monitor'
 import type {
   NotebookProjectResources,
   NotebookResourceRelease,
@@ -11,23 +16,11 @@ import type {
 } from '../../../../shared/notebook-resources'
 import { useNavigationStore } from '@/stores/navigation-store'
 import { useSessionStore } from '@/stores/session-store'
+import { WEB_CALLER_LOCATION_ATTRIBUTE } from '../../../../shared/web-caller-location'
 import { useProjectStore } from '@/stores/project-store'
-import { sendWorkspaceMessage } from '@/lib/acp/workspace-runtime-command-owner'
-import {
-  dismissNotebookMemoryRejection,
-  observeNotebookMemoryPolicy,
-  presentNotebookMemoryRejection,
-  useNotebookMemoryNoticeStore
-} from '@/stores/notebook-memory-notice-store'
 import { ProjectComputeInbox } from './ProjectComputeInbox'
-import { NotebookMemoryNoticeBridge } from './NotebookMemoryNoticeBridge'
 
 vi.mock('react-i18next', () => createI18nTestStub())
-const { sendMessage } = vi.hoisted(() => ({ sendMessage: vi.fn() }))
-vi.mock('@/lib/acp/useWorkspaceAgentRuntime', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('@/lib/acp/useWorkspaceAgentRuntime')>()),
-  useWorkspaceAgentRuntime: () => ({ sendMessage })
-}))
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
 const group = (revision = 'original-resources'): NotebookSessionResources => ({
@@ -82,12 +75,8 @@ describe('Compute Notebook resource controls', () => {
   }
 
   beforeEach(() => {
+    document.documentElement.setAttribute(WEB_CALLER_LOCATION_ATTRIBUTE, 'remote')
     vi.resetAllMocks()
-    useNotebookMemoryNoticeStore.setState({
-      rejection: undefined,
-      dismissedRefusalIds: [],
-      dismissedPressureScopes: []
-    })
     view = { groups: [group()], pendingDecisions: [], releases: [] }
     getProjectResources.mockImplementation(async () => view)
     releaseSessionResources.mockImplementation(async () => {
@@ -95,7 +84,6 @@ describe('Compute Notebook resource controls', () => {
       view = { ...view, releases: [result] }
       return result
     })
-    sendMessage.mockResolvedValue({ id: 'fresh-user-message' })
     useNavigationStore.setState({ view: 'workspace', activeProjectId: 'project-1' })
     useProjectStore.setState({ projects: [] })
     useSessionStore.setState({
@@ -136,11 +124,489 @@ describe('Compute Notebook resource controls', () => {
   })
 
   afterEach(() => {
+    document.documentElement.removeAttribute(WEB_CALLER_LOCATION_ATTRIBUTE)
     act(() => root?.unmount())
     document.body.innerHTML = ''
-    document.documentElement.removeAttribute('data-open-science-web-events')
     vi.useRealTimers()
     vi.restoreAllMocks()
+  })
+
+  const process = (
+    id: string,
+    kind: NotebookProcessObservation['kind'],
+    scope = group()
+  ): NotebookProcessObservation => ({
+    id,
+    kind,
+    lane: 'main',
+    projectId: scope.projectId,
+    sessionId: scope.sessionId,
+    status: 'idle',
+    startedAt: 1,
+    pid: 42,
+    hasLastCell: true,
+    lastCell: { code: 'print(42)', truncated: false },
+    memoryBytes: 1024,
+    cpuCores: 0.4,
+    processes: [{ pid: 42, parentPid: 1, command: 'kernel', memoryBytes: 1024, cpuCores: 0.4 }]
+  })
+  const desktop = (
+    initial: NotebookProcessObservation[],
+    initialResourceProjectIds?: string[]
+  ): {
+    terminate: ReturnType<typeof vi.fn>
+    update: (next: NotebookProcessObservation[]) => void
+    updateResourceProjects: (ids: string[]) => void
+  } => {
+    document.documentElement.removeAttribute(WEB_CALLER_LOCATION_ATTRIBUTE)
+    let instances = initial
+    let resourceProjectIds = initialResourceProjectIds
+    const getProcessMonitor = vi.fn(async (): Promise<NotebookProcessMonitorSnapshot> => ({
+      sampledAt: Date.now(),
+      processMetricsAvailable: true,
+      host: {
+        hostname: 'localhost',
+        platform: 'darwin',
+        cpuCount: 8,
+        memoryTotalBytes: 16 * 1024 ** 3,
+        memoryUsedBytes: 4 * 1024 ** 3,
+        uptimeSeconds: 60
+      },
+      instances,
+      resourceProjectIds
+    }))
+    const terminate = vi.fn()
+    Object.assign(window.api.notebook, { getProcessMonitor, terminateMonitoredProcess: terminate })
+    return {
+      terminate,
+      update: (next: NotebookProcessObservation[]) => {
+        instances = next
+      },
+      updateResourceProjects: (ids: string[]) => {
+        resourceProjectIds = ids
+      }
+    }
+  }
+  const stopAll = async (session: HTMLElement): Promise<void> => {
+    await act(async () =>
+      fireEvent.click(
+        within(session.querySelector('header')!).getByRole('button', { name: 'Stop all' })
+      )
+    )
+  }
+
+  it('shows one desktop list with four interpreter details and changes Stop to Force close after a verified timeout', async () => {
+    const items = [
+      process('python', 'python'),
+      process('r', 'r'),
+      process('shell', 'shell'),
+      process('repl', 'repl')
+    ]
+    const { terminate, update } = desktop(items)
+    terminate.mockImplementationOnce(async () => {
+      update([{ ...items[0], status: 'cleanup-failed', canForceClose: true }, ...items.slice(1)])
+      throw new Error('Timed out')
+    })
+    terminate.mockImplementationOnce(async () => update(items.slice(1)))
+    await render()
+    expect(screen.getAllByRole('heading', { name: 'Notebook resources' })).toHaveLength(1)
+    expect(screen.getByRole('heading', { name: 'Compute jobs' })).toBeTruthy()
+    await act(async () => fireEvent.click(container.querySelector('button[aria-controls]')!))
+    for (const name of ['Python', 'R', 'Shell', 'JavaScript REPL'])
+      expect(screen.getByRole('img', { name })).toBeTruthy()
+
+    const row = container.querySelector<HTMLDetailsElement>('[data-kernel-details]')!
+    await act(async () => {
+      row.open = true
+      fireEvent(row, new Event('toggle'))
+    })
+    expect(within(row).getByRole('region', { name: 'Last cell' }).textContent).toContain(
+      'print(42)'
+    )
+    expect(within(row).getByText('Process ID')).toBeTruthy()
+    expect(within(row).getByRole('img', { name: 'Memory usage' })).toBeTruthy()
+    expect(within(row).getByRole('img', { name: 'CPU usage' })).toBeTruthy()
+    await act(async () => fireEvent.click(within(row).getByRole('button', { name: 'Stop' })))
+    const form = screen.getByRole('form', { name: 'Stop this kernel?' })
+    await act(async () => {
+      fireEvent.change(within(form).getByRole('textbox'), { target: { value: 'Use less memory' } })
+      fireEvent.submit(form)
+    })
+    expect(terminate).toHaveBeenNthCalledWith(1, {
+      id: 'python',
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      comment: 'Use less memory'
+    })
+    await act(async () => fireEvent.click(within(row).getByRole('button', { name: 'Force close' })))
+    expect(terminate).toHaveBeenNthCalledWith(2, {
+      id: 'python',
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      force: true
+    })
+  })
+
+  it('discovers resource-only Sessions across projects and confirms the targeted revision', async () => {
+    const otherProject = {
+      ...group('target-revision'),
+      projectId: 'project-2',
+      sessionId: 'foreign',
+      resources: [{ ...group().resources[0], id: 'repro', group: 'reproduction' as const }]
+    }
+    const installer = {
+      ...group('installer-revision'),
+      sessionId: 'installer',
+      resources: [{ ...group().resources[0], id: 'installer', group: 'installer' as const }]
+    }
+    const pending = {
+      ...installer,
+      sessionId: 'hidden',
+      resources: [{ ...installer.resources[0], id: 'hidden', group: 'operation' as const }]
+    }
+    desktop([], ['project-2'])
+    useSessionStore.setState((state) => ({
+      sessions: [
+        ...state.sessions,
+        {
+          ...state.sessions[0],
+          id: 'foreign',
+          projectId: 'project-2',
+          title: 'Other project session'
+        },
+        { ...state.sessions[0], id: 'installer', title: 'Installer session' },
+        { ...state.sessions[0], id: 'hidden', title: 'Pending-only session' }
+      ]
+    }))
+    getProjectResources.mockImplementation(async ({ projectId }) => ({
+      groups: projectId === 'project-2' ? [otherProject] : [installer, pending],
+      releases: view.releases.filter((result) => result.projectId === projectId),
+      pendingDecisions: []
+    }))
+    releaseSessionResources.mockImplementation(async (request) => {
+      const result = release({
+        ...request,
+        operationId: request.sessionId,
+        status: 'released',
+        phase: 'release',
+        resources: []
+      })
+      view.releases.push(result)
+      return result
+    })
+    const openSession = vi.spyOn(useNavigationStore.getState(), 'openSession').mockReturnValue(true)
+    await render()
+    expect(screen.queryByText('Pending-only session')).toBeNull()
+    expect(screen.getByText('Other project session')).toBeTruthy()
+    expect(getProjectResources).toHaveBeenCalledWith({ projectId: 'project-2' })
+    const pendingRead = Promise.withResolvers<NotebookProjectResources>()
+    getProjectResources.mockReturnValueOnce(pendingRead.promise)
+    await stopAll(screen.getByText('Other project session').closest('section')!)
+    await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Current project' })))
+    expect(screen.queryByText('Other project session')).toBeNull()
+    await act(async () =>
+      pendingRead.resolve({ groups: [otherProject], releases: [], pendingDecisions: [] })
+    )
+    expect(screen.queryByRole('alertdialog')).toBeNull()
+    expect(releaseSessionResources).not.toHaveBeenCalled()
+    await act(async () => fireEvent.click(screen.getByRole('button', { name: 'All projects' })))
+    await stopAll(screen.getByText('Other project session').closest('section')!)
+    const confirmation = screen.getByRole('alertdialog')
+    expect(within(confirmation).getByText(/may be forced to stop/)).toBeTruthy()
+    await act(async () => {
+      fireEvent.change(within(confirmation).getByRole('textbox'), {
+        target: { value: 'Reduce demand' }
+      })
+      fireEvent.click(within(confirmation).getByRole('button', { name: 'Stop' }))
+    })
+    expect(releaseSessionResources).toHaveBeenCalledExactlyOnceWith({
+      projectId: 'project-2',
+      sessionId: 'foreign',
+      revision: 'target-revision',
+      stopAll: { comment: 'Reduce demand' }
+    })
+    const completion = screen.getByText('Notebook resources released').closest('section')!
+    expect(within(completion).getByRole('status').textContent).toContain('Other project session')
+    const open = within(completion).getByRole('button', { name: 'Open session' })
+    await act(async () => fireEvent.click(open))
+    expect(openSession).toHaveBeenCalledExactlyOnceWith('project-2', 'foreign', 'user')
+
+    const session = screen.getByText('Installer session').closest('section')!
+    await act(async () => fireEvent.click(session.querySelector('button[aria-controls]')!))
+    expect(within(session).getByText('Other resources (1)')).toBeTruthy()
+    await stopAll(session)
+    const installerConfirmation = screen.getByRole('alertdialog')
+    expect(installerConfirmation.textContent).toContain('Environment installer')
+    await act(async () =>
+      fireEvent.click(within(installerConfirmation).getByRole('button', { name: 'Stop' }))
+    )
+    expect(releaseSessionResources).toHaveBeenNthCalledWith(2, {
+      projectId: 'project-1',
+      sessionId: 'installer',
+      revision: 'installer-revision',
+      stopAll: { comment: '' }
+    })
+  })
+
+  it('announces cross-project release progress after the installer disappears', async () => {
+    vi.useFakeTimers()
+    const { updateResourceProjects } = desktop([], ['project-2'])
+    const installer = {
+      ...group(),
+      projectId: 'project-2',
+      resources: [{ ...group().resources[0], id: 'installer', group: 'installer' as const }]
+    }
+    const operation = release({
+      projectId: 'project-2',
+      phase: 'release',
+      resources: [{ id: 'installer', group: 'installer', status: 'pending' }]
+    })
+    const completedHistory = release({
+      operationId: 'earlier-release',
+      projectId: 'project-2',
+      phase: 'release',
+      status: 'released'
+    })
+    view = { groups: [installer], pendingDecisions: [], releases: [completedHistory] }
+    getProjectResources.mockImplementation(async ({ projectId }) =>
+      projectId === 'project-2' ? view : { groups: [], pendingDecisions: [], releases: [] }
+    )
+    releaseSessionResources.mockImplementation(async () => {
+      view = { ...view, groups: [] }
+      return operation
+    })
+    await render()
+    expect(screen.queryByText('Notebook resources released')).toBeNull()
+    await stopAll(screen.getByText('Research analysis').closest('section')!)
+    const confirmation = screen.getByRole('alertdialog')
+    await act(async () =>
+      fireEvent.click(within(confirmation).getByRole('button', { name: 'Stop' }))
+    )
+
+    expect(screen.queryByRole('button', { name: 'Stop all' })).toBeNull()
+    const announcement = screen
+      .getByText('Releasing Notebook resources')
+      .closest('[role="status"]')!
+    expect(announcement.textContent).toContain('Research analysis')
+    await act(async () => button('Current project').click())
+    expect(announcement.closest('[hidden]')).not.toBeNull()
+    expect(screen.queryByRole('alertdialog')).toBeNull()
+    await act(async () => button('All projects').click())
+    expect(announcement.closest('[hidden]')).toBeNull()
+    updateResourceProjects([])
+
+    for (const [phase, label] of [
+      ['retry', 'Retrying Notebook cleanup…'],
+      ['force-close', 'Force closing Notebook processes…']
+    ] as const) {
+      view = { ...view, releases: [completedHistory, { ...operation, phase }] }
+      await act(async () => vi.advanceTimersByTimeAsync(3000))
+      expect(announcement.textContent).toContain(label)
+    }
+
+    view = {
+      ...view,
+      releases: [
+        completedHistory,
+        {
+          ...operation,
+          phase: 'force-close',
+          status: 'released',
+          resources: [
+            { ...operation.resources[0], status: 'released', environmentRecoveryRequired: true }
+          ]
+        }
+      ]
+    }
+    await act(async () => vi.advanceTimersByTimeAsync(3000))
+    expect(announcement.textContent).toContain('Notebook resources released')
+    expect(announcement.textContent).toContain(
+      'The installer stopped. Recover the affected environment before using it again.'
+    )
+    expect(screen.queryByRole('button', { name: 'Retry cleanup' })).toBeNull()
+    expect(retryResourceRelease).not.toHaveBeenCalled()
+
+    const result = announcement.closest('section')!
+    await act(async () => fireEvent.click(within(result).getByRole('button', { name: 'Dismiss' })))
+    await act(async () => vi.advanceTimersByTimeAsync(3000))
+    expect(screen.queryByText('Notebook resources released')).toBeNull()
+  })
+
+  it('drops departed project rows and stops polling their failed discovery read', async () => {
+    vi.useFakeTimers()
+    const { updateResourceProjects } = desktop([], ['project-2'])
+    const installer = {
+      ...group(),
+      projectId: 'project-2',
+      resources: [{ ...group().resources[0], id: 'installer', group: 'installer' as const }]
+    }
+    let departed = false
+    getProjectResources.mockImplementation(async ({ projectId }) => {
+      if (projectId !== 'project-2') return { groups: [], pendingDecisions: [], releases: [] }
+      if (departed) throw new Error('Departed project read failed')
+      return { groups: [installer], pendingDecisions: [], releases: [] }
+    })
+    await render()
+    expect(screen.getByText('Research analysis')).toBeTruthy()
+
+    departed = true
+    updateResourceProjects([])
+    await act(async () => vi.advanceTimersByTimeAsync(3000))
+    expect(screen.queryByText('Research analysis')).toBeNull()
+    expect(screen.queryByText('Could not refresh Notebook resources')).toBeNull()
+    const reads = getProjectResources.mock.calls.filter(
+      ([request]) => request.projectId === 'project-2'
+    ).length
+    await act(async () => vi.advanceTimersByTimeAsync(9000))
+    expect(
+      getProjectResources.mock.calls.filter(([request]) => request.projectId === 'project-2')
+    ).toHaveLength(reads)
+  })
+
+  it('reports final desktop cleanup failures even when the resource list is empty', async () => {
+    desktop([])
+    view = {
+      groups: [],
+      pendingDecisions: [],
+      releases: [
+        release({ status: 'released', phase: 'release', operationId: 'complete' }),
+        release({ status: 'releasing', phase: 'retry', operationId: 'in-progress' }),
+        release({
+          status: 'partial',
+          phase: 'force-close',
+          resources: [
+            {
+              id: 'python-original',
+              group: 'kernel',
+              kind: 'python',
+              status: 'incomplete',
+              temporaryResourcesRemoved: false
+            }
+          ]
+        })
+      ]
+    }
+    await render()
+    expect(screen.getByRole('alert').textContent).toContain('Cleanup incomplete')
+    expect(container.textContent).not.toContain('Notebook resources released')
+    expect(container.textContent).toContain('Retrying Notebook cleanup')
+    const notice = screen.getByRole('alert').closest('section')!
+    await act(async () => fireEvent.click(within(notice).getByText('Details', { exact: true })))
+    expect(within(notice).getByText(/Temporary resources removed: No/)).toBeTruthy()
+    await act(async () => fireEvent.click(within(notice).getByRole('button', { name: 'Dismiss' })))
+    expect(screen.queryByRole('alert')).toBeNull()
+  })
+
+  it('keeps a desktop cleanup completion that arrives before the Stop response', async () => {
+    vi.useFakeTimers()
+    desktop([process('python', 'python')])
+    const pending = Promise.withResolvers<NotebookResourceRelease>()
+    releaseSessionResources.mockReturnValueOnce(pending.promise)
+    await render()
+    await stopAll(screen.getByText('Research analysis').closest('section')!)
+    const confirmation = screen.getByRole('alertdialog')
+    await act(async () => button('Stop', confirmation).click())
+
+    view = {
+      ...view,
+      groups: [],
+      releases: [release({ phase: 'release', status: 'released' })]
+    }
+    await act(async () => vi.advanceTimersByTimeAsync(3000))
+    expect(screen.queryByText('Notebook resources released')).toBeNull()
+    const refresh = Promise.withResolvers<NotebookProjectResources>()
+    getProjectResources.mockReturnValueOnce(refresh.promise)
+    await act(async () => pending.resolve(release({ phase: 'release' })))
+    expect(screen.queryByRole('alertdialog')).toBeNull()
+    expect(screen.getByRole('status').textContent).toContain('Notebook resources released')
+    await act(async () => refresh.resolve(view))
+  })
+
+  it('retries the original desktop cleanup operation without any remaining resource rows', async () => {
+    vi.useFakeTimers()
+    desktop([])
+    const partial = release({ phase: 'force-close', status: 'partial', finishedAt: Date.now() })
+    view = { ...view, groups: [], releases: [partial] }
+    const pending = Promise.withResolvers<NotebookResourceRelease>()
+    retryResourceRelease.mockReturnValueOnce(pending.promise)
+    await render()
+
+    const retry = button('Retry cleanup')
+    await act(async () => retry.click())
+    expect(retry.disabled).toBe(true)
+    expect(retryResourceRelease).toHaveBeenCalledExactlyOnceWith({
+      projectId: partial.projectId,
+      sessionId: partial.sessionId,
+      operationId: partial.operationId
+    })
+    await act(async () => pending.reject(new Error('Cleanup service unavailable')))
+    expect(container.textContent).toContain('Notebook release could not be confirmed.')
+    expect(retry.disabled).toBe(false)
+
+    const staleView = view
+    const staleRead = Promise.withResolvers<NotebookProjectResources>()
+    getProjectResources.mockReturnValueOnce(staleRead.promise)
+    await act(async () => vi.advanceTimersByTimeAsync(3000))
+    retryResourceRelease.mockImplementationOnce(async () => {
+      const result = release({ phase: 'retry', status: 'releasing' })
+      view = { ...view, releases: [result] }
+      return result
+    })
+    await act(async () => retry.click())
+    expect(retryResourceRelease.mock.calls[1]).toEqual(retryResourceRelease.mock.calls[0])
+    expect(releaseSessionResources).not.toHaveBeenCalled()
+    expect(screen.queryByRole('button', { name: 'Retry cleanup' })).toBeNull()
+    expect(screen.getByRole('status').textContent).toContain('Retrying Notebook cleanup…')
+    expect(screen.queryByRole('alert')).toBeNull()
+
+    await act(async () => staleRead.resolve(staleView))
+    expect(screen.queryByRole('button', { name: 'Retry cleanup' })).toBeNull()
+    expect(screen.getByRole('status').textContent).toContain('Retrying Notebook cleanup…')
+
+    view = { ...view, releases: [release({ phase: 'retry', status: 'released' })] }
+    await act(async () => vi.advanceTimersByTimeAsync(3000))
+    expect(screen.getByRole('status').textContent).toContain('Notebook resources released')
+  })
+
+  it.each(['Cancel', 'Escape'] as const)(
+    'restores focus when desktop Stop closes using %s',
+    async (close) => {
+      vi.useFakeTimers()
+      desktop([process('python', 'python')])
+      await render()
+      const session = screen.getByText('Research analysis').closest('section')!
+      const stop = button('Stop all', session.querySelector('header')!)
+      await stopAll(session)
+      const confirmation = screen.getByRole('alertdialog')
+      await act(async () => {
+        if (close === 'Escape') fireEvent.keyDown(confirmation, { key: 'Escape' })
+        else button('Cancel', confirmation).click()
+        await vi.advanceTimersByTimeAsync(1)
+      })
+      expect(screen.queryByRole('alertdialog')).toBeNull()
+      expect(document.activeElement).toBe(stop)
+      expect(releaseSessionResources).not.toHaveBeenCalled()
+    }
+  )
+
+  it('focuses the project scope control if the session disappears during confirmation', async () => {
+    vi.useFakeTimers()
+    const { update } = desktop([process('python', 'python')])
+    await render()
+    const session = screen.getByText('Research analysis').closest('section')!
+    await stopAll(session)
+
+    update([])
+    view = { ...view, groups: [] }
+    await act(async () => vi.advanceTimersByTimeAsync(3000))
+    expect(screen.queryByText('Research analysis')).toBeNull()
+    const confirmation = screen.getByRole('alertdialog')
+    await act(async () => {
+      fireEvent.keyDown(confirmation, { key: 'Escape' })
+      await vi.advanceTimersByTimeAsync(1)
+    })
+    expect(screen.queryByRole('alertdialog')).toBeNull()
+    expect(document.activeElement).toBe(button('All projects'))
   })
 
   it('distinguishes loading, failed reads, stale data and a confirmed empty project', async () => {
@@ -200,7 +666,6 @@ describe('Compute Notebook resource controls', () => {
       sessionId: 'session-1',
       revision: 'original-resources'
     })
-    expect(sendMessage).not.toHaveBeenCalled()
   })
 
   it('summarizes each resource and keeps its memory diagnostics in an independent disclosure', async () => {
@@ -351,155 +816,7 @@ describe('Compute Notebook resource controls', () => {
     expect(document.querySelector('[role="dialog"]')?.textContent).toContain(
       'Notebook resources released'
     )
-    expect(sendMessage).not.toHaveBeenCalled()
   })
-
-  it('keeps an explicit continuation after dismissal and healthy recovery even when no resources exist', async () => {
-    const memory = {
-      status: 'pressured' as const,
-      reason: 'linux-memory-low',
-      source: 'linux-proc',
-      executionScope: 'linux:host',
-      checkedAt: 1
-    }
-    presentNotebookMemoryRejection({
-      projectId: 'project-1',
-      sessionId: 'session-1',
-      source: 'agent',
-      refusalId: 'refusal-original',
-      memory
-    })
-    dismissNotebookMemoryRejection()
-    observeNotebookMemoryPolicy({
-      hasLiveResources: false,
-      memory: { ...memory, status: 'healthy', reason: 'memory-available', checkedAt: 2 }
-    })
-    expect(useNotebookMemoryNoticeStore.getState().rejection).toBeUndefined()
-    const decision = {
-      projectId: 'project-1',
-      sessionId: 'session-1',
-      refusalId: 'refusal-original'
-    }
-    view = {
-      groups: [],
-      releases: [release({ status: 'released', continuations: [decision] })],
-      pendingDecisions: [{ ...decision, kind: 'memory' }]
-    }
-    sendMessage.mockRejectedValueOnce(new Error('NOTEBOOK_MEMORY_UNAVAILABLE: sample timed out'))
-    await render()
-    expect(container.textContent).toContain('No running Notebooks')
-    expect(container.textContent).toContain('Waiting for your decision')
-    expect(container.textContent).not.toContain('Interpreters: 1')
-    expect(sendMessage).not.toHaveBeenCalled()
-    await act(async () => button('Check and continue').click())
-    expect(container.querySelector('[role="alert"]')?.textContent).toContain(
-      'Could not confirm memory status. This Notebook did not run.'
-    )
-    expect(document.querySelector('[role="dialog"]')).toBeNull()
-    await act(async () => button('Check and continue').click())
-    expect(sendMessage).toHaveBeenCalledTimes(2)
-    expect(sendMessage).toHaveBeenLastCalledWith(
-      expect.objectContaining({
-        projectId: 'project-1',
-        sessionId: 'session-1',
-        cwd: '/workspace',
-        requireExistingSession: true,
-        preserveSelection: true,
-        notebookContinuation: { refusalId: 'refusal-original', kind: 'memory' }
-      })
-    )
-    expect(releaseSessionResources).not.toHaveBeenCalled()
-  })
-
-  it('shows where to continue stopped Notebook work when Compute is open in Web', async () => {
-    document.documentElement.setAttribute('data-open-science-web-events', 'true')
-    view = {
-      groups: [],
-      releases: [],
-      pendingDecisions: [
-        { projectId: 'project-1', sessionId: 'session-1', refusalId: 'refusal-original' }
-      ]
-    }
-    await render()
-    expect(container.textContent).toContain(
-      'Open the same Session and branch in the Open-Science desktop app'
-    )
-    expect(
-      [...container.querySelectorAll('button')].some(
-        (item) => item.textContent === 'Continue Notebook work'
-      )
-    ).toBe(false)
-    expect(sendMessage).not.toHaveBeenCalled()
-  })
-
-  it.each(['notice', 'compute'] as const)(
-    'shows the branch recovery action only at the clicked %s',
-    async (entrance) => {
-      const decision = {
-        projectId: 'project-1',
-        sessionId: 'session-1',
-        refusalId: `refusal-branch-${entrance}`,
-        messageBranchId: 'original-branch',
-        kind: 'memory' as const
-      }
-      view = { groups: [], releases: [], pendingDecisions: [decision] }
-      const continueNotebookExecution = vi.fn()
-      sendMessage.mockImplementationOnce((input) =>
-        sendWorkspaceMessage(
-          {
-            state: {
-              status: 'connected',
-              cwd: '/workspace',
-              sessionIds: ['session-1'],
-              events: [],
-              pendingPermissions: [],
-              permissionProfiles: {},
-              permissionGrants: {},
-              contextUsageBySession: {},
-              promptInFlight: false,
-              promptInFlightSessionIds: []
-            },
-            createSession: vi.fn(),
-            resumeSession: vi.fn(),
-            resetSessionContext: vi.fn(),
-            sendPrompt: vi.fn(),
-            continueNotebookExecution
-          },
-          input
-        )
-      )
-      if (entrance === 'notice')
-        presentNotebookMemoryRejection({
-          ...decision,
-          source: 'agent',
-          memory: {
-            status: 'pressured',
-            reason: 'windows-physical-low',
-            source: 'windows-performance-info',
-            executionScope: 'windows:host',
-            checkedAt: 1
-          }
-        })
-      root = createRoot(container)
-      await act(async () =>
-        root?.render(
-          <>
-            <ProjectComputeInbox />
-            <NotebookMemoryNoticeBridge projectId="project-1" sendMessage={sendMessage} />
-          </>
-        )
-      )
-      const surface = entrance === 'notice' ? document.querySelector('[role="dialog"]')! : container
-      await act(async () => button('Check and continue', surface).click())
-      const guidance =
-        'Return to the conversation branch where Notebook execution stopped before continuing.'
-      expect(surface.querySelector('[role="alert"]')?.textContent).toContain(guidance)
-      if (entrance === 'notice') expect(container.textContent).not.toContain(guidance)
-      else expect(document.querySelector('[role="dialog"]')).toBeNull()
-      expect(button('Check and continue', surface).disabled).toBe(false)
-      expect(continueNotebookExecution).not.toHaveBeenCalled()
-    }
-  )
 
   it('polls at five-second intervals without overlapping reads and stops while hidden or unmounted', async () => {
     vi.useFakeTimers()
@@ -545,7 +862,7 @@ describe('Compute Notebook resource controls', () => {
     expect(getProjectResources).toHaveBeenCalledTimes(4)
   })
 
-  it('discovers a new ready batch and pending decision after opening an empty Compute view', async () => {
+  it('discovers a new ready batch after opening an empty Compute view', async () => {
     vi.useFakeTimers()
     vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
     view = { groups: [], pendingDecisions: [], releases: [] }
@@ -575,15 +892,11 @@ describe('Compute Notebook resource controls', () => {
     await act(async () => vi.advanceTimersByTimeAsync(4_999))
     expect(getProjectResources).toHaveBeenCalledOnce()
     expect(container.textContent).not.toContain('Reproduction batch')
-    expect(container.textContent).not.toContain('Waiting for your decision')
 
     await act(async () => vi.advanceTimersByTimeAsync(1))
     expect(getProjectResources).toHaveBeenCalledTimes(2)
     expect(container.textContent).toContain('Reproduction batch')
     expect(container.textContent).toContain('Ready')
-    expect(container.textContent).toContain('Waiting for your decision')
-    expect(button('Continue Notebook work').disabled).toBe(false)
-    expect(sendMessage).not.toHaveBeenCalled()
   })
 
   it.each([
@@ -643,107 +956,6 @@ describe('Compute Notebook resource controls', () => {
     )
     expect(container.textContent).toContain('replacement environment')
     expect(releaseSessionResources).toHaveBeenCalledOnce()
-    expect(sendMessage).not.toHaveBeenCalled()
-  })
-
-  it('offers a current cross-project origin decision from the release result once and removes it when replaced', async () => {
-    const origin = {
-      projectId: 'project-origin',
-      sessionId: 'session-origin',
-      refusalId: 'origin-refusal'
-    }
-    useProjectStore.setState({
-      projects: [
-        {
-          id: origin.projectId,
-          name: 'Original project',
-          description: '',
-          isExample: false,
-          createdAt: 1,
-          updatedAt: 1
-        }
-      ]
-    })
-    const existing = useSessionStore.getState().sessions[0]
-    useSessionStore.setState({
-      sessions: [
-        ...useSessionStore.getState().sessions,
-        {
-          ...existing,
-          id: origin.sessionId,
-          projectId: origin.projectId,
-          title: 'Original discussion',
-          cwd: '/origin'
-        }
-      ]
-    })
-    view = {
-      groups: [],
-      pendingDecisions: [],
-      releases: [release({ status: 'released', continuations: [origin] })]
-    }
-    await render()
-    expect(container.textContent).toContain('Project: Original project')
-    expect(
-      [...container.querySelectorAll('button')].filter(
-        (item) => item.textContent === 'Continue Notebook work'
-      )
-    ).toHaveLength(1)
-    view = { ...view, pendingDecisions: [origin] }
-    await act(async () => changed())
-    expect(
-      [...container.querySelectorAll('button')].filter(
-        (item) => item.textContent === 'Continue Notebook work'
-      )
-    ).toHaveLength(1)
-    await act(async () => button('Continue Notebook work').click())
-    expect(sendMessage).toHaveBeenCalledWith(
-      expect.objectContaining({
-        projectId: 'project-origin',
-        sessionId: 'session-origin',
-        cwd: '/origin',
-        requireExistingSession: true,
-        preserveSelection: true,
-        notebookContinuation: { refusalId: 'origin-refusal' }
-      })
-    )
-    view = {
-      groups: [],
-      pendingDecisions: [],
-      releases: [release({ status: 'released', continuations: [] })]
-    }
-    await act(async () => changed())
-    expect(
-      [...container.querySelectorAll('button')].some(
-        (item) => item.textContent === 'Continue Notebook work'
-      )
-    ).toBe(false)
-  })
-
-  it('keeps a local failure notice when a stale continuation disappears after refresh', async () => {
-    view = {
-      groups: [],
-      releases: [],
-      pendingDecisions: [
-        { projectId: 'project-1', sessionId: 'session-1', refusalId: 'obsolete-refusal' }
-      ]
-    }
-    await render()
-    sendMessage.mockImplementationOnce(async () => {
-      view = { groups: [], pendingDecisions: [], releases: [] }
-      throw new Error('The current Notebook decision changed.')
-    })
-    await act(async () => button('Continue Notebook work').click())
-    expect(container.querySelector('[role="alert"]')?.textContent).toContain(
-      'Notebook continuation could not be started. The previous request remains stopped.'
-    )
-    expect(
-      [...container.querySelectorAll('button')].some(
-        (item) => item.textContent === 'Continue Notebook work'
-      )
-    ).toBe(false)
-    expect(sendMessage).toHaveBeenCalledOnce()
-    expect(getProjectResources).toHaveBeenCalledTimes(2)
   })
 
   it('disables retry during a current Session conflict and enables the same operation when it clears', async () => {
@@ -831,6 +1043,29 @@ describe('Compute Notebook resource controls', () => {
     await act(async () => changed())
     expect(progress.textContent).toContain('original analysis')
     expect(progress.textContent).not.toContain('replacement environment')
-    expect(sendMessage).not.toHaveBeenCalled()
+  })
+
+  it('shows completed installer cleanup separately from environment recovery in remote progress', async () => {
+    const completed = release({
+      status: 'released',
+      resources: [
+        {
+          id: 'installer',
+          group: 'installer',
+          status: 'released',
+          processesTerminated: true,
+          environmentRecoveryRequired: true
+        }
+      ]
+    })
+    view = { groups: [], pendingDecisions: [], releases: [completed] }
+    await render()
+    await act(async () => button('View cleanup progress').click())
+    const progress = screen.getByRole('dialog')
+    expect(progress.textContent).toContain('Processes terminated: Yes')
+    expect(progress.textContent).toContain(
+      'The installer stopped. Recover the affected environment before using it again.'
+    )
+    expect(within(progress).queryByRole('button', { name: 'Retry cleanup' })).toBeNull()
   })
 })

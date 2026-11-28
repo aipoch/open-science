@@ -3232,7 +3232,7 @@ if (process.argv.includes('--version')) {
           reply = await verifyComputeMonitor(context.params.sessionId)
         } else if (prompt.includes('Read Compute stop feedback.')) {
           reply = await verifyComputeMonitor(context.params.sessionId, true)
-        } else if (prompt.includes('Continue the blocked Notebook work. Keep completed results')) {
+        } else if (prompt.includes('Try the Notebook again with a smaller dataset.')) {
           const sessionId = context.params.sessionId
           const gate = notebookMemoryContinuationGates.get(sessionId)
           if (!gate) {

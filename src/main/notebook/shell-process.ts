@@ -3,11 +3,16 @@ import { releaseNotebookResources, type NotebookOwnedResource } from './owned-re
 import { NotebookExecutionAdmissionError } from './execution-admission'
 import { ExecutionDeadline } from './execution-deadline'
 import { spawn, type ChildProcess, type ChildProcessWithoutNullStreams } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
 import { dirname } from 'node:path'
 import type { NotebookExecutionRecovery } from '../../shared/execution-recovery'
 import { nodeRuntimeEnvironment } from '../node-process-host'
 import { augmentedPathEnv } from '../settings/shell-path'
-import { ShellCellSession, ShellCellTimeout } from './shell-cell-session'
+import {
+  ShellCellSession,
+  ShellCellTimeout,
+  type WindowsShellProcessControl
+} from './shell-cell-session'
 import { createWslExecutionMemoryPolicy } from './memory-policy-wsl'
 import type { IdleInterpreter } from './idle-reclamation'
 import type { NotebookShellProcessRequest, NotebookShellResult } from './shell-process-contract'
@@ -27,10 +32,16 @@ import {
   assertProcessTreeSupport,
   capturePosixProcessTreeIdentity,
   createPosixProcessTreeOwnership,
+  registerProcessTreeOwnership,
   terminateProcessTree,
   trackOwnedPosixProcessTree,
   type ProcessTreeKillResult
 } from '../process-tree'
+import {
+  hasVerifiedWindowsProcessTreeMember,
+  reapWindowsOwnedJob,
+  spawnWindowsOwnedProcess
+} from '../process-tree-windows'
 import { resolveWindowsPowerShellExecutable } from '../windows-powershell'
 import { wsl2BashPreviewStatus } from '../wsl/wsl2-preview-gate'
 import {
@@ -619,7 +630,10 @@ const runShellCommand = (
     preparedLaunch?: PreparedShellLaunch
     terminateTree?: (process: ChildProcess) => Promise<ProcessTreeKillResult>
     previewAvailable?: () => boolean
-    onProcess?: (child: ChildProcessWithoutNullStreams) => void
+    onProcess?: (
+      child: ChildProcessWithoutNullStreams,
+      windowsProcessControl?: WindowsShellProcessControl
+    ) => void
     onCleanupRetry?: (retry: () => Promise<boolean>) => void
     configRoot?: string
   }
@@ -740,6 +754,23 @@ const runShellCommand = (
       hosted: platform === 'win32' && Boolean(sandboxed?.confirmProcessTreeTermination)
     })
     const ownershipHost = launchOwnership?.host
+    const requestNativeTermination = sandboxed?.requestProcessTreeTermination
+    const confirmNativeTermination = sandboxed?.confirmProcessTreeTermination
+    const windowsJobName =
+      platform === 'win32' &&
+      process.platform === 'win32' &&
+      options.onProcess &&
+      runtimeBinding.kind !== 'wsl2-bash' &&
+      requestNativeTermination &&
+      confirmNativeTermination
+        ? `Local\\OpenScience.Notebook.${randomUUID()}`
+        : undefined
+    let windowsJobReaped = false
+    const reapShellJob = async (): Promise<ProcessTreeKillResult> => {
+      if (windowsJobName && (await reapWindowsOwnedJob(windowsJobName).catch(() => false)))
+        windowsJobReaped = true
+      return { reaped: windowsJobReaped }
+    }
     // A fast macOS command can exit before native identity capture. Keep the detached leader alive
     // until it is tracked, using a separate pipe so persistent interpreters retain their stdin.
     const gateLaunch = platform === 'darwin' && process.platform === 'darwin'
@@ -765,29 +796,40 @@ const runShellCommand = (
             ...(sandboxed?.args ?? invocation.args)
           ]
         : (sandboxed?.args ?? invocation.args)
-      child = spawn(
-        gateLaunch ? '/bin/sh' : executable,
-        gateLaunch
-          ? [
-              '-c',
-              'IFS= read -r start <&3 && [ "$start" = start ] || exit 125; exec 3<&-; exec "$@"',
-              'open-science-shell-start',
-              executable,
-              ...args
-            ]
-          : args,
-        {
-          cwd: options.cwd,
-          env: ownershipHost
-            ? { ...processTreeOwnership.env, ...nodeRuntimeEnvironment() }
-            : processTreeOwnership.env,
-          windowsHide: true,
-          stdio: gateLaunch ? ['pipe', 'pipe', 'pipe', 'pipe'] : 'pipe',
-          // On POSIX this makes the shell the leader of a private process group/session. Keep its handle
-          // and stdio referenced (no unref), preserving normal completion while enabling safe -PGID kills.
-          detached: platform !== 'win32'
-        }
-      )
+      const spawnOptions = {
+        cwd: options.cwd,
+        env: ownershipHost
+          ? { ...processTreeOwnership.env, ...nodeRuntimeEnvironment() }
+          : processTreeOwnership.env,
+        windowsHide: true
+      }
+      if (windowsJobName) {
+        // The outer Job owns the entire launch even if the inner sandbox supervisor exits.
+        child = spawnWindowsOwnedProcess(windowsJobName, executable, args, {
+          ...spawnOptions,
+          stdio: 'pipe'
+        })
+        registerProcessTreeOwnership(child, { terminate: reapShellJob, settled: () => {} })
+      } else {
+        child = spawn(
+          gateLaunch ? '/bin/sh' : executable,
+          gateLaunch
+            ? [
+                '-c',
+                'IFS= read -r start <&3 && [ "$start" = start ] || exit 125; exec 3<&-; exec "$@"',
+                'open-science-shell-start',
+                executable,
+                ...args
+              ]
+            : args,
+          {
+            ...spawnOptions,
+            stdio: gateLaunch ? ['pipe', 'pipe', 'pipe', 'pipe'] : 'pipe',
+            // POSIX uses a private process group and keeps its handle and streams referenced.
+            detached: platform !== 'win32'
+          }
+        )
+      }
     } catch (error) {
       launchOwnership?.abort()
       spawnAdmission?.notStarted()
@@ -905,6 +947,23 @@ const runShellCommand = (
       let cancelled = false
       let exited = false
       let failed = false
+      let nativeTreeReaped = false
+      const windowsProcessControl: WindowsShellProcessControl | undefined =
+        windowsJobName && requestNativeTermination
+          ? {
+              hasLiveProcess: () =>
+                !nativeTreeReaped &&
+                !windowsJobReaped &&
+                hasVerifiedWindowsProcessTreeMember(child),
+              hasReapedProcessTree: () => nativeTreeReaped || windowsJobReaped,
+              forceClose: async () => {
+                if (await requestNativeTermination().catch(() => false)) nativeTreeReaped = true
+                // A Job handle can prove process exit after a supervisor failure. Keep sandbox
+                // cleanup pending until the sandbox supplies its own terminal proof.
+                else if (hasVerifiedWindowsProcessTreeMember(child)) await reapShellJob()
+              }
+            }
+          : undefined
 
       const finish = async (
         result: NotebookShellResult,
@@ -934,20 +993,20 @@ const runShellCommand = (
           const processesTerminated =
             nativeProcessState !== undefined
               ? nativeProcessState !== 'termination-unknown'
-              : sandboxed?.confirmProcessTreeTermination
-                ? await sandboxed.confirmProcessTreeTermination().catch(() => false)
+              : confirmNativeTermination
+                ? await confirmNativeTermination().catch(() => false)
                 : processOutcome.processesTerminated
           // Retain the original native owner's one-time proof for late reconciliation. Once
           // verified, receipt removal may retry without consuming that proof or signalling a PID.
-          let nativeTreeReaped = processesTerminated
-          const confirmNativeTermination = sandboxed?.confirmProcessTreeTermination
+          nativeTreeReaped = processesTerminated
           const cleanupOutcome: NotebookSandboxProcessOutcome = withNotebookSandboxProcessState(
             {
               processesTerminated,
               ...(!processesTerminated && confirmNativeTermination
                 ? {
                     confirmTermination: async () => {
-                      nativeTreeReaped ||= await confirmNativeTermination()
+                      if (!nativeTreeReaped && (await confirmNativeTermination()))
+                        nativeTreeReaped = true
                       if (nativeTreeReaped) releaseProcessOwnership?.()
                       return nativeTreeReaped
                     }
@@ -978,9 +1037,14 @@ const runShellCommand = (
               : 'termination-unknown'
           )
           const retryCleanup = async (): Promise<boolean> => {
-            const done = cleanupCompleted(
-              await cleanupSandboxWithRetry(cleanupReason, cleanupOutcome)
-            )
+            const outcome =
+              nativeTreeReaped && !processesTerminated
+                ? withNotebookSandboxProcessState(
+                    { processesTerminated: true },
+                    'started-and-reaped'
+                  )
+                : cleanupOutcome
+            const done = cleanupCompleted(await cleanupSandboxWithRetry(cleanupReason, outcome))
             if (done) releaseProcessOwnership?.()
             return done
           }
@@ -1009,8 +1073,8 @@ const runShellCommand = (
       ): void => {
         // Let the original native supervisor terminate its own Job first. taskkill can kill that
         // supervisor before it publishes the Job-empty proof, which must remain unknown.
-        const nativeTeardown = sandboxed?.requestProcessTreeTermination
-          ? sandboxed.requestProcessTreeTermination().catch(() => false)
+        const nativeTeardown = requestNativeTermination
+          ? requestNativeTermination().catch(() => false)
           : Promise.resolve(false)
         void nativeTeardown.then((nativeReaped) => {
           if (nativeReaped) {
@@ -1258,7 +1322,7 @@ const runShellCommand = (
       }
       if (options.onProcess) {
         timeoutTimer.cancel()
-        options.onProcess(child)
+        options.onProcess(child, windowsProcessControl)
       }
     })
   }
@@ -1287,25 +1351,36 @@ class NotebookShellProcessAdapter implements NotebookShellProcess {
     return undefined
   }
   resources(): NotebookOwnedResource[] {
-    return Array.from(this.sessions, ([key, session]) => ({
-      identity: session,
-      group: 'shell',
-      kind: session.identity.runtimeBinding?.kind,
-      phase: session.resourcePhase,
-      startedAt: session.startedAt,
-      projectId: session.identity.projectId,
-      sessionId: session.identity.sessionId,
-      laneKey: session.identity.laneKey,
-      sampleMemory: session.sampleMemory,
-      ...(session.identity.runtimeBinding?.kind === 'wsl2-bash'
-        ? {}
-        : { executionDomain: 'host' as const }),
-      release: async () => {
-        const result = await session.shutdown()
-        if (result.reaped && this.sessions.get(key) === session) this.sessions.delete(key)
-        return result
+    return Array.from(this.sessions, ([key, session]) => {
+      const processIdentity = session.monitoredProcess?.identity
+      return {
+        identity: session,
+        processIdentity,
+        hasLiveProcess: () => session.hasLiveProcess(processIdentity),
+        group: 'shell',
+        kind: session.identity.runtimeBinding?.kind,
+        phase: session.resourcePhase,
+        startedAt: session.startedAt,
+        projectId: session.identity.projectId,
+        sessionId: session.identity.sessionId,
+        laneKey: session.identity.laneKey,
+        sampleMemory: session.sampleMemory,
+        ...(session.identity.runtimeBinding?.kind === 'wsl2-bash'
+          ? {}
+          : { executionDomain: 'host' as const }),
+        release: async (force) => {
+          if (
+            processIdentity &&
+            session.monitoredProcess &&
+            session.monitoredProcess.identity !== processIdentity
+          )
+            return { reaped: false, error: new Error(SHELL_CLEANUP_INCOMPLETE_MESSAGE) }
+          const result = await session.shutdown(force ? processIdentity : undefined)
+          if (result.reaped && this.sessions.get(key) === session) this.sessions.delete(key)
+          return result
+        }
       }
-    }))
+    })
   }
 
   monitoredProcesses(): import('./process-monitor').MonitoredInterpreter[] {
@@ -1322,13 +1397,14 @@ class NotebookShellProcessAdapter implements NotebookShellProcess {
           environment: session.identity.runtimeBinding?.kind,
           startedAt: session.startedAt,
           ...observed,
-          terminate: async () => {
+          hasLiveProcess: () => session.hasLiveProcess(observed.identity),
+          terminate: async (force) => {
             if (
               this.sessions.get(key) !== session ||
               session.monitoredProcess?.identity !== observed.identity
             )
               throw new Error('Shell process changed. Refresh the list.')
-            const result = await session.shutdown()
+            const result = await session.shutdown(force ? observed.identity : undefined)
             if (!result.reaped) throw new Error(SHELL_CLEANUP_INCOMPLETE_MESSAGE)
             if (this.sessions.get(key) === session) this.sessions.delete(key)
           }

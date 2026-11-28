@@ -3,6 +3,7 @@ import {
   type NotebookCellPreview
 } from '../../shared/notebook-process-monitor'
 import { compilePowerShellCommand } from './powershell-native-capture'
+import { hasVerifiedPosixProcessTreeMember, terminateProcessTree } from '../process-tree'
 import { createNotebookMemorySampler, type NotebookOwnedMemorySample } from './resource-memory'
 import {
   NotebookExecutionAdmissionError,
@@ -23,11 +24,20 @@ import {
 } from './content-limits'
 import type { NotebookShellProcessRequest, NotebookShellResult } from './shell-process-contract'
 
+export type WindowsShellProcessControl = {
+  hasLiveProcess: () => boolean
+  hasReapedProcessTree: () => boolean
+  forceClose: () => Promise<void>
+}
+
 type Launch = (
   request: NotebookShellProcessRequest,
   startup: string,
   signal: AbortSignal,
-  onProcess: (child: ChildProcessWithoutNullStreams) => void,
+  onProcess: (
+    child: ChildProcessWithoutNullStreams,
+    windowsProcessControl?: WindowsShellProcessControl
+  ) => void,
   controlPipe?: string
 ) => Promise<{
   memoryProbe?: NotebookSandboxedSpawn['memoryProbe']
@@ -73,7 +83,8 @@ export class ShellCellSession {
   startedAt = Date.now()
   private lastCell?: NotebookCellPreview
   private lastPid?: number
-  private lastProcessIdentity?: object
+  private lastProcessIdentity?: ChildProcessWithoutNullStreams
+  private windowsProcessControl?: WindowsShellProcessControl
   private cleanupInProgress = false
   private cleanupAttemptFailed = false
 
@@ -177,7 +188,17 @@ export class ShellCellSession {
     })
   }
 
-  async shutdown(): Promise<{ reaped: boolean }> {
+  hasLiveProcess(identity: object | undefined): boolean {
+    return (
+      this.identity.runtimeBinding?.kind !== 'wsl2-bash' &&
+      this.lastProcessIdentity !== undefined &&
+      this.lastProcessIdentity === identity &&
+      (this.windowsProcessControl?.hasLiveProcess() ??
+        hasVerifiedPosixProcessTreeMember(this.lastProcessIdentity))
+    )
+  }
+
+  async shutdown(forceIdentity?: object): Promise<{ reaped: boolean; processesTerminated?: true }> {
     this.closed = true
     this.lifetime.abort()
     this.executionPolicy?.policy.dispose?.()
@@ -186,9 +207,18 @@ export class ShellCellSession {
     try {
       await this.tail
       await this.completion
+      if (forceIdentity && this.hasLiveProcess(forceIdentity) && this.lastProcessIdentity) {
+        if (this.windowsProcessControl) await this.windowsProcessControl.forceClose()
+        else await terminateProcessTree(this.lastProcessIdentity, 'SIGKILL')
+      }
       const reaped = await this.verifyCleanup()
       this.cleanupAttemptFailed = !reaped
-      return { reaped }
+      return {
+        reaped,
+        ...(!reaped && this.windowsProcessControl?.hasReapedProcessTree()
+          ? { processesTerminated: true }
+          : {})
+      }
     } catch (error) {
       this.cleanupAttemptFailed = true
       throw error
@@ -436,13 +466,14 @@ export class ShellCellSession {
           request,
           this.startup(powershell, control?.name),
           this.lifetime.signal,
-          (child) => {
+          (child, windowsProcessControl) => {
             this.launchedProcess = true
             this.child = child
             if (this.identity.runtimeBinding?.kind !== 'wsl2-bash')
               this.sampleMemory = createNotebookMemorySampler(child)
             this.lastPid = child.pid
             this.lastProcessIdentity = child
+            this.windowsProcessControl = windowsProcessControl
             this.lastCell = undefined
             this.startedAt = Date.now()
             child.stdout.on('data', (chunk: string) => this.accept('stdout', chunk))

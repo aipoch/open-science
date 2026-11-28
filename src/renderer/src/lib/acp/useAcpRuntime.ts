@@ -9,7 +9,6 @@ import {
 } from '../../stores/desktop-runtime-recovery-store'
 import type {
   AcpContinueInterruptedTurnRequest,
-  AcpContinueNotebookExecutionRequest,
   AcpCreateSessionResponse,
   AcpSessionAgentTarget,
   ElicitationResponse,
@@ -119,9 +118,6 @@ const useAcpRuntime = (): {
     agentTarget?: AcpSessionAgentTarget,
     memoryEnabled?: boolean
   ) => Promise<AcpCreateSessionResponse>
-  continueNotebookExecution?: (
-    request: AcpContinueNotebookExecutionRequest
-  ) => Promise<AcpRuntimeState>
   continueInterruptedTurn: (request: AcpContinueInterruptedTurnRequest) => Promise<AcpRuntimeState>
   resetSessionContext: (
     sessionId: AcpResumeSessionRequest['sessionId'],
@@ -153,7 +149,8 @@ const useAcpRuntime = (): {
     memoryEnabled?: boolean,
     referencedSessions?: AcpPromptRequest['referencedSessions'],
     currentImages?: AcpPromptRequest['currentImages'],
-    parts?: AcpPromptRequest['parts']
+    parts?: AcpPromptRequest['parts'],
+    notebookSubmission?: AcpPromptRequest['notebookSubmission']
   ) => Promise<AcpRuntimeState>
   respondToPermission: (
     requestId: string,
@@ -515,12 +512,6 @@ const useAcpRuntime = (): {
     [runPromptAction]
   )
 
-  const continueNotebookExecution = useCallback(
-    (request: AcpContinueNotebookExecutionRequest) =>
-      runPromptAction(() => window.api.acp.continueNotebookExecution(request)),
-    [runPromptAction]
-  )
-
   // Drops the agent-side context for a session whose accumulated history outgrew the request limit,
   // adopting a fresh agent session so the next prompt can replay a bounded text transcript.
   const resetSessionContext = useCallback(
@@ -588,7 +579,8 @@ const useAcpRuntime = (): {
       memoryEnabled = true,
       referencedSessions?: AcpPromptRequest['referencedSessions'],
       currentImages?: AcpPromptRequest['currentImages'],
-      parts?: AcpPromptRequest['parts']
+      parts?: AcpPromptRequest['parts'],
+      notebookSubmission?: AcpPromptRequest['notebookSubmission']
     ) =>
       runPromptAction(() =>
         window.api.acp.sendPrompt({
@@ -610,7 +602,8 @@ const useAcpRuntime = (): {
           ...(resumeFallback ? { resumeFallback } : {}),
           ...(provenanceContext ? { provenanceContext } : {}),
           ...(contextReset ? { contextReset: true } : {}),
-          ...(turnIntent ? { turnIntent } : {})
+          ...(turnIntent ? { turnIntent } : {}),
+          ...(notebookSubmission ? { notebookSubmission } : {})
         })
       ),
     [runPromptAction]
@@ -700,7 +693,6 @@ const useAcpRuntime = (): {
     createSession,
     resumeSession,
     continueInterruptedTurn,
-    continueNotebookExecution,
     resetSessionContext,
     compactSession,
     deleteSession,

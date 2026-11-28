@@ -46,7 +46,7 @@ If the service returns review_notebook_code_in_app or review_notebook_runtime_in
 
 For continue_notebook, read the current stop with get_interaction. Help resolve the reported cause, then ask the user whether to continue this specific stop. Relay their decision with source user_relay, the original runId, branchId and refusalId, a continuation prompt, and a requestId you save before sending. Use get_submission or wait_submission with that ID; an accepted receipt points to a new Run in the same Session. Read that Run for execution and delivery. If the stop has expired, inspect the original Run and ask the user before starting any new work. Never retry a stopped cell or repeat the decision with a fresh ID.
 
-For continue_notebook_in_app, ask the user to open the original Session and branch in the Open-Science desktop app connected to this service and choose Continue Notebook work in Compute after resolving the cause. Recheck the same Session and match continuedFromRefusalId to observe the new user-authorized turn.
+For continue_notebook_in_app, ask the user to resolve the cause and send a new message in the original Session and branch in Open-Science. Recheck the same Session and match continuedFromRefusalId to observe the new user-authorized turn.
 
 Notebook working files are not delivered Artifacts. List the Artifacts for the accepted research runId, download the report and results table, and call get_delivery_status with the downloaded paths. Report execution.status and delivery.status separately. Say the handoff is complete only when handoffStatus is complete. If files verify but a Notebook cell failed, report both facts.
 

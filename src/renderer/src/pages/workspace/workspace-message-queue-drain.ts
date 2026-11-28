@@ -126,6 +126,9 @@ const dispatchQueuedSession = (
           })
         : await current.runtime.sendMessage({
             sessionId,
+            ...(item.kind === 'user' && item.notebookSubmission
+              ? { notebookSubmission: item.notebookSubmission }
+              : {}),
             onMessageAppended: () => {
               if (owner.dispatches.get(sessionId) !== activeDispatch) return
               owner.replaceItem(sessionId, item.id, { messageAppended: true })

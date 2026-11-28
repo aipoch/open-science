@@ -528,7 +528,7 @@ const sendIntentKeys = [
   'attribution',
   'requireExistingSession',
   'turnIntent',
-  'notebookContinuation',
+  'notebookSubmission',
   'attachments',
   'annotations',
   'cwd',
@@ -713,7 +713,6 @@ describe('workspace runtime architecture', () => {
       }
       expect(unsupportedFacadeImports).toEqual([])
       expect(hookConsumers).toEqual([
-        'pages/workspace/NotebookResourcePanel.tsx',
         'pages/workspace/WorkspacePage.tsx',
         'pages/workspace/workspace-message-queue-controller.ts'
       ])

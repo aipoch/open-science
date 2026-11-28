@@ -1,4 +1,7 @@
-import type { NotebookExecutionRecovery } from '../../shared/execution-recovery'
+import {
+  isNotebookMemoryRejectionCode,
+  type NotebookExecutionRecovery
+} from '../../shared/execution-recovery'
 
 /** Project trusted, bounded facts; never infer recovery instructions from command output. */
 export const executionRecoveryContext = (
@@ -11,6 +14,16 @@ export const executionRecoveryContext = (
     (retryAfter !== 'runtime-ready' && retryAfter !== 'cleanup-verified')
   )
     return undefined
+  const { memoryRejectionCode } = value as Record<string, unknown>
+  if (isNotebookMemoryRejectionCode(memoryRejectionCode)) {
+    return {
+      execution,
+      retryAfter,
+      memoryRejectionCode,
+      guidance:
+        'Report the failure and wait for a new user request before retrying Notebook execution.'
+    }
+  }
   const candidate =
     rawKernel && typeof rawKernel === 'object' ? (rawKernel as Record<string, unknown>) : undefined
   const kernel: NotebookExecutionRecovery['kernel'] =

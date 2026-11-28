@@ -236,7 +236,7 @@ async function packageStatus(snapshot, expected, signal) {
           ? 'session_busy'
           : 'package_fork_failed',
       message: notebook
-        ? 'Notebook execution in the source Session was stopped. Have the user continue the original work in Open-Science Compute before considering a Fork.'
+        ? 'Notebook execution in the source Session was stopped. Have the user resolve the cause and send a new message in the original Session and branch in Open-Science before considering a Fork.'
         : pendingApproval
           ? 'The source Session still has an approval decision. Have the user review it in Open-Science.'
           : 'Open-Science could not create the Fork. Check that the source Session exists and is idle.',

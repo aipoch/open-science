@@ -546,6 +546,7 @@ export const WEB_EVENT_CHANNELS = {
   'memory.onChanged': 'memory:changed',
   'notebook.onAvailable': 'notebook:available',
   'notebook.onChanged': 'notebook:changed',
+  'notebook.onExecutionRefused': 'notebook:execution-refused',
   'notebook.onMemoryPolicyChanged': 'notebook:memory-policy-changed',
   'notebook.onMemoryRejected': 'notebook:memory-rejected',
   'notebookEnv.onProgress': 'notebook-env:progress',

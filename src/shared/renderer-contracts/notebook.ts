@@ -1,3 +1,4 @@
+import type { NotebookExecutionRefusal } from '../execution-recovery'
 import type {
   NotebookMemoryRejectedEvent,
   NotebookMemoryPolicyChangedEvent,
@@ -113,6 +114,9 @@ export const contracts = {
   'notebook.onMemoryRejected': callable<
     (listener: AcpListener<NotebookMemoryRejectedEvent>) => RemoveListener
   >()('notebook', ['notebook:memory-rejected', EVENT]),
+  'notebook.onExecutionRefused': callable<
+    (listener: AcpListener<NotebookExecutionRefusal>) => RemoveListener
+  >()('notebook', ['notebook:execution-refused', EVENT]),
   'notebook.onMemoryPolicyChanged': callable<
     (listener: AcpListener<NotebookMemoryPolicyChangedEvent>) => RemoveListener
   >()('notebook', ['notebook:memory-policy-changed', EVENT]),

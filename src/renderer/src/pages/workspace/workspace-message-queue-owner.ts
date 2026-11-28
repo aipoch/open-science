@@ -1,4 +1,5 @@
 import type { WorkspaceAgentRuntime } from '@/lib/acp/useWorkspaceAgentRuntime'
+import type { AcpPromptRequest } from '../../../../shared/acp'
 import type { PermissionProfileId } from '../../../../shared/permission-profiles'
 import type { MessageAttribution } from '../../../../shared/session-message-contract'
 import type { SessionAgentConfiguration } from '../../../../shared/settings'
@@ -16,6 +17,7 @@ type MessageQueueAdmission = {
   session: ChatSession
   snapshot: ComposerSendSnapshot
   text: string
+  notebookSubmission?: AcpPromptRequest['notebookSubmission']
   forcedSkillIds: string[]
   permissionProfile: PermissionProfileId
   agentConfiguration: SessionAgentConfiguration

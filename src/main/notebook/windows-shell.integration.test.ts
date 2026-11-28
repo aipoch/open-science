@@ -29,6 +29,7 @@ import { NOTEBOOK_SHELL_DEFAULT_TIMEOUT_MS } from '../../shared/notebook'
 import { NotebookNetworkSandbox } from '@aipoch/notebook-network-sandbox'
 import { createRootNotebookLane } from './lane-identity'
 import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
+import { windowsProcessStartTicks } from '../windows-process-query'
 
 configureTestRuntimeMetadata()
 
@@ -129,6 +130,141 @@ const runPowerShell = (command: string, version?: '7.6'): ReturnType<typeof runS
     // 120 seconds; this tighter process budget still detects a genuinely stuck shell.
     timeoutMs: POWERSHELL_PROCESS_TIMEOUT_MS
   })
+
+it.runIf(process.platform === 'win32')(
+  'force closes the original Windows Shell through its supervisor after incomplete cleanup',
+  async () => {
+    const root = await mkdtemp(join(tmpdir(), 'shell-force-close-'))
+    const pidPath = join(root, 'shell.pid')
+    const registry = new ShellProcessOwnershipRegistry(root)
+    const sandbox = fixtureSandbox(
+      root,
+      `require('node:fs').writeFileSync(${JSON.stringify(pidPath)}, String(process.pid));
+       setTimeout(() => {}, 25000);`
+    )
+    let terminateJob: (() => Promise<boolean>) | undefined
+    const requestTermination = vi.fn(async () => (await terminateJob?.()) ?? false)
+    requestTermination.mockResolvedValueOnce(false)
+    const terminateTree = vi
+      .spyOn(processTree, 'terminateProcessTree')
+      .mockResolvedValueOnce({ reaped: false })
+    const adapter = new NotebookShellProcessAdapter(
+      'win32',
+      {
+        wrap: async (invocation) => {
+          const wrapped = await sandbox.wrap(invocation)
+          terminateJob = wrapped.requestProcessTreeTermination
+          return { ...wrapped, requestProcessTreeTermination: requestTermination }
+        }
+      },
+      registry
+    )
+    const execution = adapter.execute(shellRequest(root))
+    try {
+      await Promise.race([
+        vi.waitFor(async () => expect(await readFile(pidPath, 'utf8')).toMatch(/^\d+$/), {
+          timeout: 10_000
+        }),
+        execution.then((result) => {
+          throw new Error(`Shell exited before the test stopped it: ${result.stderr}`)
+        })
+      ])
+      const [resource] = adapter.resources()
+      await expect(resource.release()).resolves.toMatchObject({ reaped: false })
+      await expect(resource.release()).resolves.toMatchObject({ reaped: false })
+      await expect(execution).resolves.toMatchObject({ errorCode: 'shell-cleanup-incomplete' })
+      expect(requestTermination).toHaveBeenCalledOnce()
+      expect(registry.hasReceipts()).toBe(true)
+      expect(resource.hasLiveProcess?.()).toBe(true)
+
+      const [monitored] = adapter.monitoredProcesses()
+      expect(monitored.status).toBe('cleanup-failed')
+      expect(monitored.hasLiveProcess?.()).toBe(true)
+      await monitored.terminate(true)
+
+      expect(requestTermination).toHaveBeenCalledTimes(2)
+      expect(terminateTree).toHaveBeenCalledOnce()
+      expect(resource.hasLiveProcess?.()).toBe(false)
+      expect(adapter.resources()).toEqual([])
+      expect(registry.hasReceipts()).toBe(false)
+    } finally {
+      await terminateJob?.()
+      await adapter.shutdown()
+      terminateTree.mockRestore()
+      await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
+    }
+  },
+  POWERSHELL_TEST_TIMEOUT_MS
+)
+
+it.runIf(process.platform === 'win32')(
+  'can force close a surviving Windows Shell descendant after the supervisor exits',
+  async () => {
+    const root = await mkdtemp(join(tmpdir(), 'shell-supervisor-exited-'))
+    const pidPath = join(root, 'descendant.pid')
+    const stopPath = join(root, 'stop')
+    const descendant = `
+      const fs = require('node:fs');
+      fs.writeFileSync(${JSON.stringify(pidPath)}, String(process.pid));
+      setInterval(() => { if (fs.existsSync(${JSON.stringify(stopPath)})) process.exit(0) }, 25);
+      setTimeout(() => process.exit(0), 15000).unref();`
+    const supervisor = `
+      const child = require('node:child_process').spawn(process.execPath,
+        ['-e', ${JSON.stringify(descendant)}], { detached: true, stdio: 'ignore' });
+      child.unref();`
+    const registry = new ShellProcessOwnershipRegistry(root)
+    const requestTermination = vi.fn(async () => false)
+    // Model a supervisor exit without its terminal proof, leaving a descendant in the outer Job.
+    const adapter = new NotebookShellProcessAdapter(
+      'win32',
+      {
+        wrap: async () => ({
+          executable: process.execPath,
+          args: ['-e', supervisor],
+          env: process.env,
+          confirmProcessTreeTermination: async () => false,
+          requestProcessTreeTermination: requestTermination,
+          annotateStderr: (stderr) => stderr,
+          cleanup: async (_reason, outcome) => ({
+            processesTerminated: outcome.processesTerminated,
+            networkClosed: true,
+            temporaryResourcesRemoved: false
+          })
+        })
+      },
+      registry
+    )
+    let pid: number | undefined
+    let birth: string | undefined
+    try {
+      await expect(adapter.execute(shellRequest(root))).resolves.toMatchObject({
+        errorCode: 'shell-cleanup-incomplete'
+      })
+      await vi.waitFor(async () => expect(await readFile(pidPath, 'utf8')).toMatch(/^\d+$/), {
+        timeout: 10_000
+      })
+      pid = Number(await readFile(pidPath, 'utf8'))
+      birth = windowsProcessStartTicks(pid)
+      expect(birth).toBeDefined()
+      const [resource] = adapter.resources()
+      expect(resource.hasLiveProcess?.()).toBe(true)
+      await expect(resource.release(true)).resolves.toMatchObject({
+        reaped: false,
+        processesTerminated: true
+      })
+      expect(requestTermination).toHaveBeenCalledOnce()
+      expect(resource.hasLiveProcess?.()).toBe(false)
+      await expect.poll(() => windowsProcessStartTicks(pid!), { timeout: 4_000 }).not.toBe(birth)
+      expect(registry.hasReceipts()).toBe(true)
+    } finally {
+      await writeFile(stopPath, '')
+      if (pid !== undefined && birth)
+        await expect.poll(() => windowsProcessStartTicks(pid!)).not.toBe(birth)
+      await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
+    }
+  },
+  POWERSHELL_TEST_TIMEOUT_MS
+)
 
 describe.runIf(process.platform === 'win32')(
   'Windows standard execution without protection setup',

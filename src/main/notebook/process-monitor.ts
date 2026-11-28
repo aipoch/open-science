@@ -4,6 +4,8 @@ import { createRequire } from 'node:module'
 import { cpus, freemem, hostname, platform, totalmem, uptime } from 'node:os'
 import { basename } from 'node:path'
 import { promisify } from 'node:util'
+import type { NotebookResourceRelease } from '../../shared/notebook-resources'
+import type { NotebookOwnedResource } from './owned-resources'
 import type { WindowsResourceSample } from '@aipoch/process-tree-native'
 import type {
   NotebookProcessMonitorSnapshot,
@@ -21,7 +23,8 @@ export type MonitoredKernelProcess = {
   pid?: number
   startedAt: number
   status: NotebookProcessStatus
-  terminate: () => Promise<void>
+  hasLiveProcess?: () => boolean
+  terminate: (force?: boolean) => Promise<void>
 }
 
 export type MonitoredInterpreter = MonitoredKernelProcess & {
@@ -153,12 +156,66 @@ export class NotebookProcessMonitor {
   private readonly stopping = new Map<string, Promise<void>>()
   private previousCpu = cpuTimes()
   private previousProcesses = new Map<string, { at: number; seconds: number }>()
+  private readonly failedStops = new WeakMap<object, ManualKernelTermination>()
   private readonly terminationEvents: ManualKernelTermination[] = []
 
   manualTerminations(projectId: string, sessionId: string): ManualKernelTermination[] {
     return this.terminationEvents
       .filter((event) => event.projectId === projectId && event.sessionId === sessionId)
       .map((event) => ({ ...event }))
+  }
+
+  private addStop(
+    event: Omit<ManualKernelTermination, 'id' | 'requestedAt' | 'status'>
+  ): ManualKernelTermination {
+    const record = {
+      ...event,
+      id: randomUUID(),
+      requestedAt: Date.now(),
+      status: 'requested' as const
+    }
+    this.terminationEvents.push(record)
+    if (this.terminationEvents.length > 200) this.terminationEvents.shift()
+    return record
+  }
+
+  recordSessionStop(
+    resources: readonly NotebookOwnedResource[],
+    view: NotebookResourceRelease,
+    comment: string
+  ): (result: NotebookResourceRelease) => void {
+    const monitored = new Map(this.resources().map((resource) => [resource.identity, resource]))
+    const events = resources.map((resource, index) => {
+      const process = monitored.get(resource.processIdentity ?? resource.identity)
+      const entry = view.resources[index]
+      return {
+        resourceId: entry.id,
+        event: this.addStop({
+          instanceId: process ? this.id(process) : entry.id,
+          projectId: view.projectId,
+          sessionId: view.sessionId,
+          operationId: view.operationId,
+          kind:
+            process?.kind ??
+            (entry.group === 'kernel' && ['python', 'r', 'repl'].includes(entry.kind ?? '')
+              ? (entry.kind as 'python' | 'r' | 'repl')
+              : entry.group),
+          pid: process?.pid,
+          comment
+        })
+      }
+    })
+    return (result) => {
+      for (const { resourceId, event } of events)
+        event.status =
+          result.resources.find(({ id }) => id === resourceId)?.status === 'released'
+            ? 'stopped'
+            : 'cleanup-failed'
+    }
+  }
+
+  private canForceClose(resource: MonitoredInterpreter): boolean {
+    return this.failedStops.has(resource.identity) && resource.hasLiveProcess?.() === true
   }
 
   async terminateRequest(request: TerminateNotebookProcessRequest): Promise<void> {
@@ -174,7 +231,8 @@ export class NotebookProcessMonitor {
       ids.length === 0 ||
       ids.length > 100 ||
       ids.some((id) => typeof id !== 'string') ||
-      new Set(ids).size !== ids.length
+      new Set(ids).size !== ids.length ||
+      (request.force !== undefined && (typeof request.force !== 'boolean' || ids.length !== 1))
     )
       throw new Error('Invalid kernel selection.')
     const resources = this.resources()
@@ -187,24 +245,25 @@ export class NotebookProcessMonitor {
     })
     const results = await Promise.allSettled(
       selected.map(async ({ id, resource }) => {
-        const event: ManualKernelTermination = {
-          id: randomUUID(),
-          instanceId: id,
-          projectId: resource.projectId,
-          sessionId: resource.sessionId,
-          kind: resource.kind,
-          pid: resource.pid,
-          requestedAt: Date.now(),
-          comment: request.comment?.trim() ?? '',
-          status: 'requested'
-        }
-        this.terminationEvents.push(event)
-        // Bounded journal, readable even after the resource disappears.
-        if (this.terminationEvents.length > 200) this.terminationEvents.shift()
+        if (request.force && !this.canForceClose(resource))
+          throw new Error('The original Notebook process is no longer confirmed live.')
+        const event =
+          (request.force ? this.failedStops.get(resource.identity) : undefined) ??
+          this.addStop({
+            instanceId: id,
+            projectId: resource.projectId,
+            sessionId: resource.sessionId,
+            kind: resource.kind,
+            pid: resource.pid,
+            comment: request.comment?.trim() ?? ''
+          })
+        event.status = 'requested'
         try {
-          await this.terminate(id)
+          await this.terminate(id, request.force)
+          this.failedStops.delete(resource.identity)
           event.status = 'stopped'
         } catch (error) {
+          this.failedStops.set(resource.identity, event)
           event.status = 'cleanup-failed'
           throw error
         }
@@ -305,6 +364,7 @@ export class NotebookProcessMonitor {
         environment: resource.environment,
         pid: resource.pid,
         startedAt: resource.startedAt,
+        ...(this.canForceClose(resource) && !this.stopping.has(id) ? { canForceClose: true } : {}),
         hasLastCell: resource.lastCell !== undefined,
         lastCell: resource.lastCell,
         status: this.stopping.has(id) ? 'cleaning' : resource.status,
@@ -342,14 +402,14 @@ export class NotebookProcessMonitor {
     }
   }
 
-  terminate(id: string): Promise<void> {
+  terminate(id: string, force?: boolean): Promise<void> {
     const pending = this.stopping.get(id)
     if (pending) return pending
     const resource = this.resources().find((item) => this.id(item) === id)
     if (!resource)
       return Promise.reject(new Error('Notebook process no longer exists. Refresh the list.'))
     // The owning adapter checks the captured object again and performs complete native cleanup.
-    const stopping = resource.terminate().finally(() => {
+    const stopping = (force ? resource.terminate(true) : resource.terminate()).finally(() => {
       this.stopping.delete(id)
       this.latest = undefined
     })

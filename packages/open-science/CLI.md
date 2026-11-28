@@ -831,8 +831,8 @@ identifies the stopped Run. Inspect the new Run's execution and delivery. The or
 its outcome. The stop itself is in memory; if it expires or the service restarts, query any
 existing receipt and inspect the original Run before asking the user about new work.
 
-For `next.action: "continue_notebook_in_app"`, the user can still choose **Continue Notebook
-work** in **Compute** on the original Desktop Session and branch. Recheck the same Session for
+For `next.action: "continue_notebook_in_app"`, ask the user to resolve the cause and send a new
+message in the original Session and branch in Open-Science. Recheck the same Session for
 `execution.continuedFromRefusalId` after they act.
 
 Inspect and respond to an active Plan with its exact version and revision:

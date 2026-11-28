@@ -692,6 +692,7 @@ it('keeps a stopped Notebook attached to the source and refuses to Fork around i
         retryable: false,
         requiresUser: true,
         owner: 'user',
+        message: expect.stringContaining('send a new message in the original Session and branch'),
         next: [{ action: 'continue_notebook_in_app', ...source }]
       }
       expect(fork.isError).toBe(true)

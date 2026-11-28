@@ -19,6 +19,7 @@ import {
 } from './application-command-contract'
 import type { ArtifactFile } from './artifacts'
 import type { ExecutionFileEvidenceSummary } from './execution-file-evidence'
+import type { NotebookExecutionRefusal } from './execution-recovery'
 import type { NotebookRuntimeBindings } from './notebook-runtime'
 import type { OptionalProjectIdScope, ProjectIdScope } from './project-scope'
 
@@ -645,6 +646,7 @@ export type NotebookProjectActivityRequest = ProjectIdScope
 export type NotebookProjectActivity = Readonly<{
   kernels: readonly NotebookProjectKernelActivity[]
   backgroundRuns: readonly NotebookProjectBackgroundRunActivity[]
+  executionRefusals?: readonly NotebookExecutionRefusal[]
 }>
 
 // Bounded, non-persisted discovery metadata for one Agent's complete durable history. The renderer

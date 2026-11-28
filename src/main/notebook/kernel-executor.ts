@@ -25,7 +25,11 @@ import {
   notebookErrorRecovery
 } from '../../shared/notebook-execution-error'
 import { nodeRuntimeEnvironment } from '../node-process-host'
-import { reapWindowsOwnedJob, spawnWindowsOwnedProcess } from '../process-tree-windows'
+import {
+  hasVerifiedWindowsProcessTreeMember,
+  reapWindowsOwnedJob,
+  spawnWindowsOwnedProcess
+} from '../process-tree-windows'
 import { runtimeMetadataIfConfigured } from '../runtime-metadata'
 import { condaRLibraryReadRoot, kernelExecutableReadRoot } from './kernel-executable-read-root'
 import { diagnoseKernelExit } from './kernel-exit-diagnostics'
@@ -58,6 +62,7 @@ import {
 import {
   assertProcessTreeSupport,
   createPosixProcessTreeOwnership,
+  hasVerifiedPosixProcessTreeMember,
   registerProcessTreeOwnership,
   terminateProcessTree,
   trackOwnedPosixProcessTree,
@@ -326,7 +331,7 @@ type ProcState = {
   waitForNetworkApprovals?: () => Promise<void>
   stderrTail: string
   annotateStderr: (stderr: string) => string
-  teardownProcess: () => Promise<ProcessTreeKillResult>
+  teardownProcess: (force?: boolean) => Promise<ProcessTreeKillResult>
   cleanupSandbox: (
     reason: NotebookSandboxCleanupReason,
     processOutcome: NotebookSandboxProcessOutcome
@@ -360,7 +365,8 @@ type KernelStartOperation = {
   controller: AbortController
   completion: Promise<ProcState>
   proc?: ProcState
-  cleanup?: () => Promise<NotebookResourceCleanupResult>
+  hasLiveProcess?: () => boolean
+  cleanup?: (force?: boolean) => Promise<NotebookResourceCleanupResult>
   cleanupResult?: NotebookResourceCleanupResult
 }
 
@@ -615,7 +621,8 @@ class NotebookKernelExecutor implements NotebookExecutor {
       environment: proc.env,
       kernelEpochId: proc.kernelEpochId,
       sampleMemory: proc.sampleMemory,
-      release: () => this.releaseProc(proc)
+      hasLiveProcess: () => this.hasLiveProcess(proc),
+      release: (force) => this.releaseProc(proc, force)
     }))
     return [
       ...processes,
@@ -630,35 +637,67 @@ class NotebookKernelExecutor implements NotebookExecutor {
         processKey: operation.key,
         environment: operation.env,
         kernelEpochId: operation.kernelEpochId,
-        release: () => this.releaseStart(operation)
+        hasLiveProcess: () =>
+          operation.proc
+            ? this.hasLiveProcess(operation.proc)
+            : operation.hasLiveProcess?.() === true,
+        release: (force) => this.releaseStart(operation, force)
       }))
     ]
   }
 
   private async releaseStart(
-    operation: KernelStartOperation
+    operation: KernelStartOperation,
+    force?: boolean
   ): Promise<NotebookResourceCleanupResult> {
     operation.controller.abort()
     await operation.completion.catch(() => undefined)
     const result = operation.proc
-      ? await this.releaseProc(operation.proc)
-      : ((await operation.cleanup?.()) ?? { reaped: true })
+      ? await this.releaseProc(operation.proc, force)
+      : ((await operation.cleanup?.(force)) ?? { reaped: true })
     operation.cleanupResult = result
     if (result.reaped) this.starting.delete(operation)
     return result
   }
 
-  private async releaseProc(proc: ProcState): Promise<NotebookResourceCleanupResult> {
+  private hasVerifiedChild(child: ChildProcessWithoutNullStreams): boolean {
+    if (this.platform !== process.platform) return false
+    return this.platform === 'win32'
+      ? hasVerifiedWindowsProcessTreeMember(child)
+      : hasVerifiedPosixProcessTreeMember(child)
+  }
+
+  private hasLiveProcess(proc: ProcState): boolean {
+    return (
+      !proc.cleanupResult?.reaped &&
+      (this.procs.get(proc.key) === proc || this.pendingTeardowns.has(proc)) &&
+      this.hasVerifiedChild(proc.child)
+    )
+  }
+
+  private async releaseProc(
+    proc: ProcState,
+    force?: boolean
+  ): Promise<NotebookResourceCleanupResult> {
     if (proc.cleanupResult?.reaped) return proc.cleanupResult
+    if (force && !this.hasLiveProcess(proc)) {
+      return {
+        reaped: false,
+        error: new Error('The original Notebook process could not be verified.')
+      }
+    }
     this.dropProc(proc)
     this.rejectPending(proc, new NotebookExecutionCancelledError())
     proc.readline.close()
     const pending = this.pendingTeardowns.get(proc)
     if (pending) {
       const result = await pending.completion
-      return result.reaped ? result : pending.retry()
+      if (result.reaped) return result
+      if (!force) return pending.retry()
+      if (!this.hasLiveProcess(proc)) return result
+      return this.killChildTracked(proc, 'cancel', true)
     }
-    return this.killChildTracked(proc)
+    return this.killChildTracked(proc, 'cancel', force)
   }
 
   monitoredProcesses(): import('./process-monitor').MonitoredKernelProcess[] {
@@ -679,9 +718,10 @@ class NotebookKernelExecutor implements NotebookExecutor {
           : proc.cleanupPending
             ? 'cleaning'
             : 'cleanup-failed',
-      terminate: async () => {
-        if (this.procs.get(proc.key) === proc) {
-          const result = await this.releaseProc(proc)
+      hasLiveProcess: () => this.hasLiveProcess(proc),
+      terminate: async (force) => {
+        if (this.procs.get(proc.key) === proc || (force && this.pendingTeardowns.has(proc))) {
+          const result = await this.releaseProc(proc, force)
           if (!result.reaped) {
             this.notifyTerminated(proc)
             throw new Error('Notebook process-tree cleanup remains incomplete.')
@@ -1336,7 +1376,7 @@ class NotebookKernelExecutor implements NotebookExecutor {
     >
     waitForNetworkApprovals?: () => Promise<void>
     annotateStderr: (stderr: string) => string
-    teardownProcess: () => Promise<ProcessTreeKillResult>
+    teardownProcess: (force?: boolean) => Promise<ProcessTreeKillResult>
     cleanupSandbox: (
       reason: NotebookSandboxCleanupReason,
       processOutcome: NotebookSandboxProcessOutcome
@@ -1513,7 +1553,7 @@ class NotebookKernelExecutor implements NotebookExecutor {
     const log = createLogger('notebook:kernel-termination')
     // One owner supplies both executor and sandbox admission with evidence for this exact spawn.
     // Keep successful proof before settling the receipt; failed observations remain retryable.
-    const teardownProcess = async (): Promise<ProcessTreeKillResult> => {
+    const teardownProcess = async (force?: boolean): Promise<ProcessTreeKillResult> => {
       recordResourceEvent('kernel-teardown-started', {
         kernelEpochId,
         sessionId: request.sessionId,
@@ -1529,30 +1569,37 @@ class NotebookKernelExecutor implements NotebookExecutor {
           // so never repeat it after the first attempt; only its native owner may supply late proof.
           const windowsJobName = ownershipIntent?.record.windowsJobName
           const killOwnedChild = (): Promise<ProcessTreeKillResult> =>
-            this.killChild(child).catch(() => {
-              log.warn('kernel process termination attempt failed', {
-                sessionId: request.sessionId,
-                projectId: request.projectId,
-                kernelEpochId,
-                runtime: kind,
-                phase: 'process-termination',
-                attempt,
-                failureCategory: 'termination-error'
-              })
-              return { reaped: false }
-            })
+            this.killChild(child, force && this.platform !== 'win32' ? 'SIGKILL' : undefined).catch(
+              () => {
+                log.warn('kernel process termination attempt failed', {
+                  sessionId: request.sessionId,
+                  projectId: request.projectId,
+                  kernelEpochId,
+                  runtime: kind,
+                  phase: 'process-termination',
+                  attempt,
+                  failureCategory: 'termination-error'
+                })
+                return { reaped: false }
+              }
+            )
           // On Windows the native supervisor owns the Job proof. Ask it to terminate first;
           // taskkill is only a conservative fallback because it can kill the proof publisher.
-          const osResult =
-            this.platform === 'win32' &&
-            sandboxed?.confirmProcessState &&
-            sandboxed.requestProcessTreeTermination
-              ? (await sandboxed.requestProcessTreeTermination().catch(() => false))
-                ? { reaped: true }
+          const requestNativeTermination =
+            this.platform === 'win32' && sandboxed?.confirmProcessState
+              ? sandboxed.requestProcessTreeTermination
+              : undefined
+          const osResult = requestNativeTermination
+            ? (await requestNativeTermination().catch(() => false))
+              ? { reaped: true }
+              : force
+                ? { reaped: false }
                 : await (windowsOsProof ??= killOwnedChild())
-              : this.platform === 'win32'
-                ? await (windowsOsProof ??= killOwnedChild())
-                : await killOwnedChild()
+            : this.platform !== 'win32'
+              ? await killOwnedChild()
+              : force
+                ? { reaped: false }
+                : await (windowsOsProof ??= killOwnedChild())
           let result = osResult
           if (
             this.platform === 'win32' &&
@@ -1580,7 +1627,7 @@ class NotebookKernelExecutor implements NotebookExecutor {
           }
           // The inner proof covers the workload only. Settle the outer host and any remaining
           // descendants as well, without depending on a supervisor that may already have crashed.
-          if (windowsJobName) {
+          if (windowsJobName && (!force || !requestNativeTermination || result.reaped)) {
             result = { reaped: await reapWindowsOwnedJob(windowsJobName).catch(() => false) }
           }
           log.info('kernel process termination proof', {
@@ -1813,10 +1860,25 @@ class NotebookKernelExecutor implements NotebookExecutor {
     if (this.platform !== 'win32' && this.canTrackPosixProcesses)
       this.registerOwnedProcessGroup(child, processTreeOwnership.token)
     const sampleMemory = createNotebookMemorySampler(child, this.platform)
+    const hasLiveStartupProcess = (): boolean =>
+      operation !== undefined &&
+      this.starting.has(operation) &&
+      !operation.cleanupResult?.reaped &&
+      this.hasVerifiedChild(child)
     let failedSpawnCleanup: Promise<NotebookResourceCleanupResult> | undefined
-    const cleanupFailedSpawn = (): Promise<NotebookResourceCleanupResult> => {
+    const cleanupFailedSpawn = async (force?: boolean): Promise<NotebookResourceCleanupResult> => {
+      if (force && failedSpawnCleanup) {
+        const pending = await failedSpawnCleanup
+        if (pending.reaped || pending.processesTerminated) return pending
+      }
+      if (force && !hasLiveStartupProcess())
+        return {
+          ...operation?.cleanupResult,
+          reaped: false,
+          error: new Error('The original Notebook process could not be verified.')
+        }
       failedSpawnCleanup ??= (async () => {
-        const result = await teardownProcess()
+        const result = await teardownProcess(force)
         if (ownershipIntent && result.reaped) this.processLifecycle?.abandonSpawn(ownershipIntent)
         const cleanup = await cleanupSandbox(
           'spawn-failed',
@@ -1852,7 +1914,10 @@ class NotebookKernelExecutor implements NotebookExecutor {
         })
       return failedSpawnCleanup
     }
-    if (operation) operation.cleanup = cleanupFailedSpawn
+    if (operation) {
+      operation.hasLiveProcess = hasLiveStartupProcess
+      operation.cleanup = cleanupFailedSpawn
+    }
     const recordOwnership = (): void => {
       if (!ownershipIntent || child.pid === undefined || ownershipReceipt) return
       const birthToken = capturePosixProcessTreeIdentity(child)?.birthToken
@@ -2409,13 +2474,14 @@ class NotebookKernelExecutor implements NotebookExecutor {
   // clearing a newer attempt, while ProcState identity prevents one epoch from overwriting another.
   private killChildTracked(
     proc: ProcState,
-    reason: NotebookSandboxCleanupReason = 'cancel'
+    reason: NotebookSandboxCleanupReason = 'cancel',
+    force?: boolean
   ): Promise<NotebookResourceCleanupResult> {
     if (proc.cleanupResult?.reaped) return Promise.resolve(proc.cleanupResult)
     const pending = this.pendingTeardowns.get(proc)
     if (proc.cleanupPending && pending) return pending.completion
     proc.cleanupPending = true
-    const done = this.teardownProc(proc, reason).finally(() => {
+    const done = this.teardownProc(proc, reason, force).finally(() => {
       if (this.pendingTeardowns.get(proc)?.completion === done) proc.cleanupPending = false
     })
     const entry = {
@@ -2439,11 +2505,12 @@ class NotebookKernelExecutor implements NotebookExecutor {
 
   private teardownProc(
     proc: ProcState,
-    reason: NotebookSandboxCleanupReason
+    reason: NotebookSandboxCleanupReason,
+    force?: boolean
   ): Promise<NotebookResourceCleanupResult> {
     return (
       Promise.resolve()
-        .then(() => proc.teardownProcess())
+        .then(() => proc.teardownProcess(force))
         .then(async (result) => {
           const cleanup = await this.cleanupProc(
             proc,
@@ -2516,8 +2583,11 @@ class NotebookKernelExecutor implements NotebookExecutor {
   // Returns { reaped } so shutdown()/shutdownAll() can tell a clean teardown (all trees gone, file
   // handles released) from a degraded one — the update-install gate refuses the NSIS uninstall unless
   // every kernel tree was cleanly reaped. terminateProcessTree never rejects.
-  private async killChild(child: ChildProcessWithoutNullStreams): Promise<ProcessTreeKillResult> {
-    const result = await this.terminateTree(child)
+  private async killChild(
+    child: ChildProcessWithoutNullStreams,
+    signal?: NodeJS.Signals
+  ): Promise<ProcessTreeKillResult> {
+    const result = await (signal ? this.terminateTree(child, signal) : this.terminateTree(child))
     child.removeAllListeners('exit')
     child.removeAllListeners('close')
     return result

@@ -20,6 +20,7 @@ import {
   type ImageModelResult
 } from '../image-model/contract'
 import { z } from 'zod'
+import { NotebookExecutionAdmissionError } from './execution-admission'
 import { executionRecoveryContext } from './execution-recovery'
 import { markTrustedNotebookBindingPermissionPrompts } from './runtime-binding-admission'
 
@@ -3338,30 +3339,47 @@ class NotebookLocalRpcServer {
       }
       if (response.destroyed) return
       const message = error instanceof Error ? error.message : String(error)
+      const admissionRecovery =
+        error instanceof NotebookExecutionAdmissionError && error.recovery.memoryRejectionCode
+          ? executionRecoveryContext(error.recovery)
+          : undefined
       const recovery = executionRecoveryContext(notebookErrorRecovery(error))
-      const serializedError = recovery
-        ? { code: 'notebook-kernel-exited', message, recovery }
-        : error instanceof NotebookBackgroundRunError
-          ? { ...error.detail, message }
-          : error instanceof BackgroundHostMethodUnsafeError
-            ? error.detail
-            : error instanceof PlanCommandError || error instanceof ImageModelError
-              ? {
-                  code: error.code,
-                  message,
-                  ...(error instanceof ImageModelError ? { imageError: error.detail } : {})
-                }
-              : error instanceof StructuredOutputError
+      const serializedError = admissionRecovery
+        ? {
+            code: admissionRecovery.memoryRejectionCode,
+            message:
+              error instanceof Error
+                ? error.message.replace(/^NOTEBOOK_MEMORY_[A-Z]+: /, '')
+                : message,
+            recovery: {
+              execution: admissionRecovery.execution,
+              retryAfter: admissionRecovery.retryAfter,
+              guidance: admissionRecovery.guidance
+            }
+          }
+        : recovery
+          ? { code: 'notebook-kernel-exited', message, recovery }
+          : error instanceof NotebookBackgroundRunError
+            ? { ...error.detail, message }
+            : error instanceof BackgroundHostMethodUnsafeError
+              ? error.detail
+              : error instanceof PlanCommandError || error instanceof ImageModelError
                 ? {
                     code: error.code,
                     message,
-                    ...(error.keyword ? { keyword: error.keyword } : {}),
-                    ...(error.instancePath !== undefined
-                      ? { instance_path: error.instancePath }
-                      : {}),
-                    ...(error.property ? { property: error.property } : {})
+                    ...(error instanceof ImageModelError ? { imageError: error.detail } : {})
                   }
-                : message
+                : error instanceof StructuredOutputError
+                  ? {
+                      code: error.code,
+                      message,
+                      ...(error.keyword ? { keyword: error.keyword } : {}),
+                      ...(error.instancePath !== undefined
+                        ? { instance_path: error.instancePath }
+                        : {}),
+                      ...(error.property ? { property: error.property } : {})
+                    }
+                  : message
 
       if (
         !activeRequest.bodyComplete ||

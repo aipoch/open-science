@@ -40,7 +40,7 @@ import {
   EnvironmentManifestPublicationError,
   type EnvironmentStateTracker
 } from '@aipoch/environment'
-import { CHILD_UNCONFIRMED } from '@aipoch/environment'
+import { CHILD_UNCONFIRMED, retainEnvironmentChildCleanup } from '@aipoch/environment'
 import type {
   InstallDeps as InstallDepsForTest,
   InstallResult as InstallResultForTest
@@ -1439,6 +1439,7 @@ describe('notebook runtime service', () => {
 
     await expect(control).resolves.toMatchObject({ status: 'cancelled' })
     await expect(shell).resolves.toEqual({
+      runId: expect.any(String),
       status: 'cancelled',
       stdout: '',
       stderr: 'Shell command was cancelled.',
@@ -1559,7 +1560,7 @@ describe('notebook runtime service', () => {
     service.releaseProjectDeletion('default-project')
   })
 
-  it('omits collapsed source from metric transport and projects only requested previews without mutating the cache', async () => {
+  it('omits collapsed source and freshly discovers resource projects without mutating the metric cache', async () => {
     const root = await createStorageRoot()
     const { service } = lifecycleCallbackHarness(root)
     const snapshot = {
@@ -1587,12 +1588,33 @@ describe('notebook runtime service', () => {
       }))
     }
     const read = vi.spyOn(NotebookProcessMonitor.prototype, 'snapshot').mockResolvedValue(snapshot)
+    const resource = {
+      identity: {},
+      phase: 'running' as const,
+      startedAt: 1,
+      release: async () => ({ reaped: true })
+    }
+    const resources = vi.spyOn(service, 'ownedResources').mockReturnValue([
+      {
+        ...resource,
+        group: 'installer',
+        projectId: 'project-with-installer',
+        sessionId: 'install'
+      },
+      { ...resource, group: 'reproduction', projectId: 'project-with-repro', sessionId: 'repro' },
+      { ...resource, group: 'batch', projectId: 'project-with-repro', sessionId: 'repro' },
+      { ...resource, group: 'operation', projectId: 'pending-only-project', sessionId: 'pending' },
+      { ...resource, group: 'installer', projectId: 'unscoped-installer' }
+    ])
     try {
       const collapsed = await service.getProcessMonitor()
       expect(collapsed.instances.every((item) => item.hasLastCell && !item.lastCell)).toBe(true)
+      expect(collapsed.resourceProjectIds).toEqual(['project-with-installer', 'project-with-repro'])
       expect(JSON.stringify(collapsed).length).toBeLessThan(25_000)
+      resources.mockReturnValue([])
       const expanded = await service.getProcessMonitor({ sourceIds: ['kernel-99'] })
       expect(expanded.sampledAt).toBe(collapsed.sampledAt)
+      expect(expanded.resourceProjectIds).toEqual([])
       expect(expanded.instances.filter((item) => item.lastCell)).toHaveLength(1)
       expect(expanded.instances[99].lastCell?.code).toHaveLength(32_000)
       expect(snapshot.instances.every((item) => item.lastCell.code.length === 32_000)).toBe(true)
@@ -1601,6 +1623,7 @@ describe('notebook runtime service', () => {
       )
     } finally {
       read.mockRestore()
+      resources.mockRestore()
     }
   })
 
@@ -5111,6 +5134,7 @@ describe('notebook runtime service', () => {
         grantedRoots: []
       })
       expect(result).toEqual({
+        runId: expect.any(String),
         stdout: 'partial output',
         stderr: 'command failed',
         exitCode: 9,
@@ -5118,6 +5142,7 @@ describe('notebook runtime service', () => {
       })
       const state = await service.state({ sessionId: 'session-1', workspaceCwd: root })
       expect(state.runs[0]).toMatchObject({
+        runId: result.runId,
         status: 'failed',
         shellRuntime: {
           kind: 'wsl2-bash',
@@ -5266,7 +5291,11 @@ describe('notebook runtime service', () => {
             const receipt = await service.executeShellBackground(original)
             runId = receipt.runId
             await service.waitForBackgroundRun(runId)
-          } else expect(await service.executeShell(original)).toEqual(result)
+          } else {
+            const foreground = await service.executeShell(original)
+            expect(foreground).toEqual({ ...result, runId: expect.any(String) })
+            runId = foreground.runId
+          }
           prepareEnvironment.mockRejectedValue(
             new ShellPreparationError({
               stdout: '',
@@ -5282,7 +5311,7 @@ describe('notebook runtime service', () => {
             expect((await service.getBackgroundRun({ ...request, runId })).run.status).toBe(
               'completed'
             )
-          } else await expect(service.executeShell(request)).resolves.toEqual(result)
+          } else await expect(service.executeShell(request)).resolves.toEqual({ ...result, runId })
           expect(prepareEnvironment).toHaveBeenCalledOnce()
           expect(execute).toHaveBeenCalledOnce()
           const changed = { ...request, command: 'Write-Output different' }
@@ -5469,10 +5498,12 @@ describe('notebook runtime service', () => {
         expect(entered).toEqual(['first', 'second'])
         releases.get('second')?.()
 
-        await expect(Promise.all([first, second])).resolves.toEqual([
-          { stdout: 'first', stderr: '', exitCode: 0 },
-          { stdout: 'second', stderr: '', exitCode: 0 }
+        const results = await Promise.all([first, second])
+        expect(results).toEqual([
+          { runId: expect.any(String), stdout: 'first', stderr: '', exitCode: 0 },
+          { runId: expect.any(String), stdout: 'second', stderr: '', exitCode: 0 }
         ])
+        expect(results[0].runId).not.toBe(results[1].runId)
       } finally {
         execute.mockImplementation(async ({ command }) => ({
           stdout: command,
@@ -5615,6 +5646,7 @@ describe('notebook runtime service', () => {
         expect(entered).toEqual(['first'])
         cancellation.abort()
         await expect(queued).resolves.toEqual({
+          runId: expect.any(String),
           status: 'cancelled',
           kernelDispatched: false,
           stdout: '',
@@ -5624,7 +5656,12 @@ describe('notebook runtime service', () => {
         expect(entered).toEqual(['first'])
 
         releases.get('first')?.()
-        await expect(first).resolves.toEqual({ stdout: 'first', stderr: '', exitCode: 0 })
+        await expect(first).resolves.toEqual({
+          runId: expect.any(String),
+          stdout: 'first',
+          stderr: '',
+          exitCode: 0
+        })
         const finalState = await service.state({ sessionId: 'session-1', workspaceCwd: root })
         expect(
           finalState.runs.find((run) => run.script === 'cancelled-before-start')
@@ -5836,7 +5873,13 @@ describe('notebook runtime service', () => {
       const shutdown = service.shutdown(scope)
 
       await expect(Promise.all([running, queued])).resolves.toEqual([
-        { stdout: '', stderr: 'Shell command was cancelled.', exitCode: null, status: 'cancelled' },
+        {
+          runId: expect.any(String),
+          stdout: '',
+          stderr: 'Shell command was cancelled.',
+          exitCode: null,
+          status: 'cancelled'
+        },
         expect.objectContaining({ exitCode: null })
       ])
       await expect(shutdown).resolves.toEqual({ sessionId: 'session-1', status: 'shutdown' })
@@ -5885,6 +5928,7 @@ describe('notebook runtime service', () => {
 
       const disposal = service.dispose()
       await expect(execution).resolves.toEqual({
+        runId: expect.any(String),
         status: 'cancelled',
         stdout: '',
         stderr: 'Shell command was cancelled.',
@@ -5916,17 +5960,18 @@ describe('notebook runtime service', () => {
         executionInvocationId: 'shell-submission-1'
       }
 
-      await expect(
-        Promise.all([service.executeShell(request), service.executeShell(request)])
-      ).resolves.toEqual([
-        { stdout: 'once', stderr: 'non-zero', exitCode: 7 },
-        { stdout: 'once', stderr: 'non-zero', exitCode: 7 }
+      const [first, duplicate] = await Promise.all([
+        service.executeShell(request),
+        service.executeShell(request)
       ])
-      await expect(service.executeShell(request)).resolves.toEqual({
+      expect(first).toEqual({
+        runId: expect.any(String),
         stdout: 'once',
         stderr: 'non-zero',
         exitCode: 7
       })
+      expect(duplicate).toEqual(first)
+      await expect(service.executeShell(request)).resolves.toEqual(first)
       expect(execute).toHaveBeenCalledOnce()
 
       expect(execute.mock.calls[0][0].timeoutMs).toBe(300_000)
@@ -16475,6 +16520,65 @@ describe('v4 runtime bindings & agent tools', () => {
       target: failure.target
     })
     expect(installAttempts).toBe(1)
+  })
+
+  it('keeps an unconfirmed installer available to Stop all after managePackages returns', async () => {
+    const root = await createStorageRoot()
+    const scope = { projectId: 'default-project', sessionId: 'installer' }
+    let live = true
+    const forceClose = vi.fn(async () => {
+      live = false
+    })
+    const cleanup = vi.fn(async () => ({ reaped: !live, processesTerminated: !live }))
+    const service = bindingService(root, {
+      installPackagesImpl: async () => {
+        throw retainEnvironmentChildCleanup(new Error(CHILD_UNCONFIRMED), {
+          identity: {},
+          startedAt: Date.now(),
+          processControl: { hasLiveProcess: () => live, forceClose },
+          release: cleanup
+        })
+      }
+    })
+    try {
+      await expect(
+        service.managePackages({
+          ...scope,
+          workspaceCwd: root,
+          language: 'python',
+          packages: ['numpy']
+        })
+      ).resolves.toMatchObject({ ok: false, error: expect.stringContaining(CHILD_UNCONFIRMED) })
+      const [group] = (await service.getProjectResources(scope)).groups
+      expect(group?.resources).toEqual([
+        expect.objectContaining({ group: 'installer', phase: 'cleanup-pending' })
+      ])
+      expect(service.ownedResources({ ...scope, sessionId: 'another' })).toEqual([])
+      await expect(service.shutdownAll()).resolves.toMatchObject({ reaped: false })
+      expect((await service.getProjectResources(scope)).groups).toContainEqual(group)
+      const { operationId } = await service.releaseSessionResources(
+        { ...scope, revision: group.revision, stopAll: {} },
+        () => undefined
+      )
+      await service.waitForSessionTeardown(scope)
+
+      expect(forceClose).toHaveBeenCalledOnce()
+      expect(cleanup).toHaveBeenCalledTimes(4)
+      expect(service.getResourceRelease({ ...scope, operationId })).toMatchObject({
+        status: 'released',
+        phase: 'force-close',
+        resources: [
+          { status: 'released', processesTerminated: true, environmentRecoveryRequired: true }
+        ]
+      })
+      expect(service.ownedResources(scope)).toEqual([])
+      expect(service.isPrefixRecoveryBlocked(envPrefix(getRuntimeRoot(root), DEFAULT_PY_ENV))).toBe(
+        true
+      )
+    } finally {
+      live = false
+      await service.dispose()
+    }
   })
 
   it('uses one repair key for bound and unbound sessions sharing a managed R prefix', async () => {

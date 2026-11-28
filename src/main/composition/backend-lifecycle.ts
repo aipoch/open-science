@@ -83,7 +83,7 @@ export async function composeBackendLifecycle({
         const operation = notebookUserOperation(request)
         if (operation) {
           operation.assertCurrent()
-          return notebookService.createExecutionIntent(scope)
+          return notebookService.createExecutionIntent({ ...scope, source: 'reproduction' })
         }
         const missing = new NotebookExecutionIntent(scope)
         missing.block('originating-execution-context-unavailable', {
@@ -95,8 +95,8 @@ export async function composeBackendLifecycle({
         request: ArtifactReproducibilityCheckRequest,
         signal?: AbortSignal,
         intent?: NotebookExecutionIntent
-      ) =>
-        notebookService.createExecutionAdmission(
+      ) => {
+        const admission = notebookService.createExecutionAdmission(
           signal,
           undefined,
           {
@@ -105,7 +105,16 @@ export async function composeBackendLifecycle({
             source: 'reproduction'
           },
           intent
-        ),
+        )
+        if (intent?.scope.source !== 'reproduction') return admission
+        return {
+          ...admission,
+          assertCurrent: (boundary: Parameters<typeof admission.assertCurrent>[0]) => {
+            admission.assertCurrent(boundary)
+            if (boundary === 'dispatch') intent.commitUserExecution()
+          }
+        }
+      },
       retainOutput: (request: ArtifactReproducibilityCheckRequest, bytes: Buffer) =>
         retainArtifactReproducibilityOutput(
           managedFiles.artifactProvenanceRepository,

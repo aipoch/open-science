@@ -1,11 +1,13 @@
 import { randomUUID } from 'node:crypto'
 import { createLogger } from '@aipoch/diagnostics/node'
 
+import type { NotebookExecutionRefusal } from '../../shared/execution-recovery'
 import { NotebookExecutionAdmissionError, type NotebookMemoryRecheck } from './execution-admission'
 import type { notebookExecutionIntentReference } from './execution-model-contract'
 
 export const ABANDONED_NOTEBOOK_PREPARATION = 'user-execution-preparation-not-committed'
 const log = createLogger('notebook:execution-intent')
+let nextRefusalOrder = 0
 
 export type NotebookExecutionIntentScope = Readonly<{
   projectId: string
@@ -13,6 +15,7 @@ export type NotebookExecutionIntentScope = Readonly<{
   messageBranchId?: string
   promptMessageId?: string
   continuedFromRefusalId?: string
+  source?: 'reproduction'
 }>
 export type NotebookExecutionContinuation = NotebookExecutionIntentScope &
   Readonly<{ refusalId: string; kind?: 'memory' }>
@@ -27,9 +30,13 @@ export class NotebookExecutionIntent {
     id: string
     reason: string
     blockedAt: number
+    order: number
     recheckMemory?: NotebookMemoryRecheck
   }>
   private continuationClaimed = false
+  private priorRefusal?: NotebookExecutionIntent
+  private continuedRefusal = false
+  private continuingRefusal?: NotebookExecutionIntent
   private userPreparationPending = false
   private userMemoryRecheck?: () => void
   private readonly branches = new Map<
@@ -37,7 +44,10 @@ export class NotebookExecutionIntent {
     { onViolation?: () => void; providerStopRequested: boolean; cancellation: AbortController }
   >()
 
-  constructor(readonly scope: NotebookExecutionIntentScope) {}
+  constructor(
+    readonly scope: NotebookExecutionIntentScope,
+    private readonly onRefused?: (intent: NotebookExecutionIntent) => void
+  ) {}
 
   get refusalId(): string | undefined {
     return this.refusal?.id
@@ -45,6 +55,10 @@ export class NotebookExecutionIntent {
 
   get refusalAt(): number | undefined {
     return this.refusal?.blockedAt
+  }
+
+  get refusalOrder(): number | undefined {
+    return this.refusal?.order
   }
 
   get refusalReason(): string | undefined {
@@ -61,6 +75,26 @@ export class NotebookExecutionIntent {
 
   claimContinuation(): void {
     this.continuationClaimed = true
+  }
+
+  get latestRefusal(): NotebookExecutionIntent | undefined {
+    if (!this.refusal || (this.priorRefusal?.refusal?.order ?? 0) > this.refusal.order)
+      return this.priorRefusal
+    return this
+  }
+
+  get refusalWasContinued(): boolean {
+    return this.continuedRefusal
+  }
+
+  inheritRefusalHistory(intent: NotebookExecutionIntent | undefined): void {
+    const refusal = intent?.latestRefusal
+    if (
+      refusal &&
+      refusal !== this &&
+      (refusal.refusal?.order ?? 0) > (this.latestRefusal?.refusal?.order ?? 0)
+    )
+      this.priorRefusal = refusal
   }
 
   // A missing origin can inherit only when its admitted conversation contains this grant.
@@ -94,9 +128,11 @@ export class NotebookExecutionIntent {
     this.refusal = Object.freeze({
       id: randomUUID(),
       reason,
-      blockedAt: Date.now(),
+      blockedAt: performance.timeOrigin + performance.now(),
+      order: ++nextRefusalOrder,
       recheckMemory: options.recheckMemory
     })
+    if (this.latestRefusal === this) this.priorRefusal = undefined
     log.info('Notebook execution context stopped', {
       projectId: this.scope.projectId,
       sessionId: this.scope.sessionId,
@@ -109,16 +145,25 @@ export class NotebookExecutionIntent {
       originMessageId: options.originMessageId,
       errorCategory: options.errorCategory
     })
+    this.onRefused?.(this)
     return this.refusal.id
   }
 
-  prepareUserExecution(assertUserCurrent?: () => void): void {
+  prepareUserExecution(
+    assertUserCurrent?: () => void,
+    continuingRefusal?: NotebookExecutionIntent
+  ): void {
     this.userPreparationPending = true
     this.userMemoryRecheck = assertUserCurrent
+    this.continuingRefusal = continuingRefusal
   }
 
   // Provider dispatch commits preparation before tools run. Keep the one-shot human recheck
   // separate so neither a Task preparation nor a later Agent call gains a cache bypass.
+  get hasPendingUserMemoryRecheck(): boolean {
+    return Boolean(this.userMemoryRecheck)
+  }
+
   consumeUserMemoryRecheck(): (() => void) | undefined {
     const assertCurrent = this.userMemoryRecheck
     this.userMemoryRecheck = undefined
@@ -127,10 +172,15 @@ export class NotebookExecutionIntent {
 
   commitUserExecution(): void {
     this.userPreparationPending = false
+    // Keep the original intent blocked. The history still fences submissions made before its
+    // refusal, while a dispatched human turn lifts the branch restriction for fresh submissions.
+    if (this.continuingRefusal && !this.refusal) this.continuingRefusal.continuedRefusal = true
+    this.continuingRefusal = undefined
   }
 
   abandonUserExecution(): void {
     this.userMemoryRecheck = undefined
+    this.continuingRefusal = undefined
     if (!this.userPreparationPending) return
     this.userPreparationPending = false
     this.block(ABANDONED_NOTEBOOK_PREPARATION)
@@ -140,7 +190,7 @@ export class NotebookExecutionIntent {
     if (this.refusal)
       throw new NotebookExecutionAdmissionError(
         'NOTEBOOK_EXECUTION_REQUIRES_USER_ACTION',
-        'Execution was not started. This user execution context was stopped. Explain the result or inspect existing outputs, then wait for the user to explicitly continue execution. Do not retry, change tools, language, environment or Session, or delegate the rejected work.'
+        'Execution was not started. This user execution context was stopped. Explain the result or inspect existing outputs, then wait for the user to send a new message in the originating conversation. Do not retry, change tools, language, environment or Session, or delegate the rejected work.'
       )
   }
 
@@ -234,7 +284,6 @@ export type NotebookTaskContinuationOperation = Readonly<{
 type NotebookUserOperation = Readonly<{
   refusalId?: string
   projectId?: string
-  desktopContinuation?: true
   admissionSignal?: AbortSignal
   task?: NotebookTaskContinuationOperation['task']
   assertCurrent(): void
@@ -252,10 +301,30 @@ export class NotebookExecutionIntentOwner {
   private readonly scopes = new Map<string, Set<WeakRef<NotebookExecutionIntent>>>()
   private readonly currentIntents = new Map<string, NotebookExecutionIntent>()
   private readonly origins = new Map<string, WeakRef<NotebookExecutionIntent>>()
+  private readonly generation = randomUUID()
 
   private readonly collectedOrigins = new FinalizationRegistry<string>((key) => {
     if (!this.origins.get(key)?.deref()) this.origins.delete(key)
   })
+
+  constructor(private readonly onRefused?: (refusal: NotebookExecutionRefusal) => void) {}
+
+  private projectRefusal(
+    key: string,
+    intent: NotebookExecutionIntent
+  ): NotebookExecutionRefusal | undefined {
+    const refusal = intent.latestRefusal
+    const refusalId = refusal?.refusalId
+    const order = refusal?.refusalOrder
+    if (!refusalId || order === undefined) return undefined
+    const [projectId, sessionId] = JSON.parse(key) as [string, string]
+    return { projectId, sessionId, refusalId, generation: this.generation, order }
+  }
+
+  private publishRefusal(key: string, intent: NotebookExecutionIntent): void {
+    const refusal = this.projectRefusal(key, intent)
+    if (refusal) this.onRefused?.(refusal)
+  }
 
   private live(scope: NotebookExecutionIntentScope): Set<WeakRef<NotebookExecutionIntent>> {
     const key = JSON.stringify([scope.projectId, scope.sessionId])
@@ -266,14 +335,24 @@ export class NotebookExecutionIntentOwner {
   }
 
   create(scope: NotebookExecutionIntentScope): NotebookExecutionIntent {
-    const intent = new NotebookExecutionIntent(Object.freeze({ ...scope }))
+    const intent = new NotebookExecutionIntent(Object.freeze({ ...scope }), (refused) => {
+      for (const [key, current] of this.currentIntents)
+        if (current === refused) this.publishRefusal(key, refused)
+    })
     this.bind(scope, intent)
+    const previous = intent.latestRefusal
+    if (scope.source === 'reproduction' && previous?.scope.source === 'reproduction')
+      intent.prepareUserExecution(undefined, previous)
     return intent
   }
 
   bind(scope: NotebookExecutionIntentScope, intent: NotebookExecutionIntent): void {
     this.register(scope, intent)
-    this.currentIntents.set(JSON.stringify([scope.projectId, scope.sessionId]), intent)
+    const key = JSON.stringify([scope.projectId, scope.sessionId])
+    const previous = this.currentIntents.get(key)
+    intent.inheritRefusalHistory(previous)
+    this.currentIntents.set(key, intent)
+    if (previous?.latestRefusal !== intent.latestRefusal) this.publishRefusal(key, intent)
   }
 
   adopt(scope: NotebookExecutionIntentScope, sessionId: string): void {
@@ -287,8 +366,7 @@ export class NotebookExecutionIntentOwner {
     }
     this.scopes.delete(previousKey)
     const previous = this.currentIntents.get(previousKey)
-    if (previous && !this.currentIntents.has(canonicalKey))
-      this.currentIntents.set(canonicalKey, previous)
+    if (previous && !this.currentIntents.has(canonicalKey)) this.bind(canonicalScope, previous)
     this.currentIntents.delete(previousKey)
   }
 
@@ -312,6 +390,13 @@ export class NotebookExecutionIntentOwner {
 
   current(scope: NotebookExecutionIntentScope): NotebookExecutionIntent | undefined {
     return this.currentIntents.get(JSON.stringify([scope.projectId, scope.sessionId]))
+  }
+
+  submissionRefusals(projectId: string): NotebookExecutionRefusal[] {
+    return [...this.currentIntents].flatMap(([key, intent]) => {
+      const refusal = this.projectRefusal(key, intent)
+      return refusal?.projectId === projectId ? [refusal] : []
+    })
   }
 
   blockedContinuations(projectId: string): readonly NotebookExecutionContinuation[] {
@@ -375,18 +460,31 @@ export class NotebookExecutionIntentOwner {
     scope: NotebookExecutionIntentScope,
     reason: string
   ): readonly NotebookExecutionContinuation[] {
-    const affected = new Set<NotebookExecutionIntent>()
+    const affected = new Map<NotebookExecutionIntent, boolean>()
+    const newlyRefused = new Map<string, NotebookExecutionIntent>()
+    const originKey = (intent: NotebookExecutionIntent): string =>
+      JSON.stringify([intent.scope.projectId, intent.scope.sessionId, intent.scope.messageBranchId])
     for (const ref of this.live(scope)) {
       const intent = ref.deref()
       if (intent) {
+        const alreadyRefused = Boolean(intent.refusalId)
+        if (!alreadyRefused) newlyRefused.set(originKey(intent), intent)
         intent.block(reason)
-        affected.add(intent)
+        affected.set(intent, alreadyRefused)
       }
     }
     // A resource scope may belong to another originating user Session. Offer continuation only
     // for that Session's current binding, never an obsolete intent retained by a late callback.
     return [...this.currentIntents.entries()].flatMap(([key, intent]) => {
-      if (!affected.has(intent) || !intent.refusalId) return []
+      const alreadyRefused = affected.get(intent)
+      if (alreadyRefused === undefined || !intent.refusalId) return []
+      // A late Task can rebind an older stopped intent. A new refusal in the same branch
+      // still invalidates earlier composer markers, while the Task keeps its own refusal ID.
+      if (alreadyRefused) {
+        const previous = intent.latestRefusal
+        intent.inheritRefusalHistory(newlyRefused.get(originKey(intent)))
+        if (intent.latestRefusal !== previous) this.publishRefusal(key, intent)
+      }
       const [projectId, sessionId] = JSON.parse(key) as [string, string]
       return [
         {

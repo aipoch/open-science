@@ -69,6 +69,7 @@ export type ApplicationEventMap = {
   'side-chat:relay-delivered': SideChatRelayDeliveredEvent
   'notebook:available': NotebookAvailableEvent
   'notebook:changed': NotebookChangedEvent
+  'notebook:execution-refused': import('../shared/execution-recovery').NotebookExecutionRefusal
   'notebook:memory-rejected': import('../shared/notebook-memory').NotebookMemoryRejectedEvent
   'notebook:memory-policy-changed': import('../shared/notebook-memory').NotebookMemoryPolicyChangedEvent
   'notebook-env:progress': ProvisionProgress

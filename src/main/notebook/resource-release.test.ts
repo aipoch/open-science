@@ -9,7 +9,10 @@ const scopeFor = (
   sessionId: string
 ): { projectId: string; sessionId: string } => ({ projectId, sessionId })
 
-const originalOwner = (): {
+const originalOwner = (hooks?: {
+  hold?: () => () => void
+  recordStop?: ConstructorParameters<typeof NotebookResourceReleaseOwner>[0]['recordStop']
+}): {
   owner: NotebookResourceReleaseOwner
   resources: NotebookOwnedResource[]
   add: (projectId: string, sessionId: string, reaped?: boolean) => NotebookOwnedResource
@@ -25,7 +28,8 @@ const originalOwner = (): {
           (!projectId || resource.projectId === projectId) &&
           (!sessionId || resource.sessionId === sessionId)
       ),
-    hold: () => () => undefined,
+    hold: hooks?.hold ?? (() => () => undefined),
+    recordStop: hooks?.recordStop,
     observe: (scope, operation) => operations.set(JSON.stringify(scope), operation),
     block: () => [],
     decisions: () => [],
@@ -281,5 +285,111 @@ describe('NotebookResourceReleaseOwner retention', () => {
       original.owner.get({ ...scopeFor('project-a', 'in-flight'), operationId: active.operationId })
         .status
     ).toBe('released')
+  })
+})
+
+describe('desktop Stop all', () => {
+  it('holds one operation through one retry, verified force close and final feedback', async () => {
+    const retry = Promise.withResolvers<void>()
+    const force = Promise.withResolvers<void>()
+    const finished = vi.fn()
+    const recordStop = vi.fn(() => finished)
+    const unlock = vi.fn()
+    const hold = vi.fn(() => unlock)
+    const { owner, add, resources, settle } = originalOwner({ hold, recordStop })
+    const scope = scopeFor('project', 'session')
+    const original = add(scope.projectId, scope.sessionId)
+    original.hasLiveProcess = vi.fn(() => true)
+    original.release = vi.fn(async (forced?: boolean) => {
+      if (forced) {
+        await force.promise
+        return { reaped: true, processesTerminated: true }
+      }
+      return { reaped: false, processesTerminated: false }
+    })
+    vi.mocked(original.release)
+      .mockImplementationOnce(async () => ({
+        reaped: false,
+        processesTerminated: false
+      }))
+      .mockImplementationOnce(async () => {
+        await retry.promise
+        return { reaped: false, processesTerminated: false }
+      })
+    const filesystem = add(scope.projectId, scope.sessionId)
+    filesystem.hasLiveProcess = vi.fn(() => false)
+    filesystem.release = vi.fn(async () => ({
+      reaped: false,
+      processesTerminated: true,
+      networkClosed: true,
+      temporaryResourcesRemoved: false
+    }))
+    const projection = add(scope.projectId, scope.sessionId)
+    projection.release = vi.fn(async () => ({ reaped: true, projection: 'complete' as const }))
+    vi.mocked(projection.release).mockResolvedValueOnce({
+      reaped: true,
+      projection: 'failed',
+      error: new Error('Could not save Notebook state')
+    })
+
+    const [before] = (await owner.project(scope.projectId)).groups
+    const request = {
+      ...scope,
+      revision: before.revision,
+      stopAll: { comment: 'Use smaller batches' }
+    }
+    const active = owner.release(request, () => undefined)
+    const ref = { ...scope, operationId: active.operationId }
+    expect(active).toMatchObject({ status: 'releasing', phase: 'release' })
+    await vi.waitFor(() =>
+      expect(owner.get(ref)).toMatchObject({ status: 'releasing', phase: 'retry' })
+    )
+    expect(owner.release(request, () => undefined).operationId).toBe(active.operationId)
+    expect(owner.retry(ref, () => undefined).status).toBe('releasing')
+    expect(hold).toHaveBeenCalledOnce()
+    expect(unlock).not.toHaveBeenCalled()
+    expect(finished).not.toHaveBeenCalled()
+    expect(recordStop).toHaveBeenCalledExactlyOnceWith(
+      request,
+      expect.any(Array),
+      expect.objectContaining(ref)
+    )
+
+    // A hypothetical replacement appears while the retry is suspended.
+    resources.splice(resources.indexOf(original), 1)
+    const replacement = add(scope.projectId, scope.sessionId)
+    replacement.release = vi.fn(replacement.release)
+    const [after] = (await owner.project(scope.projectId)).groups
+    expect(after.revision).not.toBe(before.revision)
+    expect(after.operationId).toBe(active.operationId)
+    expect(() => owner.release({ ...request, revision: after.revision }, () => undefined)).toThrow(
+      /in progress/
+    )
+
+    retry.resolve()
+    await vi.waitFor(() =>
+      expect(owner.get(ref)).toMatchObject({ status: 'releasing', phase: 'force-close' })
+    )
+    expect(unlock).not.toHaveBeenCalled()
+    expect(finished).not.toHaveBeenCalled()
+    force.resolve()
+    await settle()
+
+    expect(original.release).toHaveBeenCalledTimes(3)
+    expect(original.release).toHaveBeenLastCalledWith(true)
+    expect(projection.release).toHaveBeenCalledTimes(2)
+    expect(filesystem.release).toHaveBeenCalledTimes(2)
+    expect(filesystem.hasLiveProcess).not.toHaveBeenCalled()
+    expect(replacement.release).not.toHaveBeenCalled()
+    expect(unlock).toHaveBeenCalledOnce()
+    const result = owner.get(ref)
+    expect(result).toMatchObject({ status: 'partial', operationId: active.operationId })
+    expect(result.resources).toMatchObject([
+      { status: 'released' },
+      { status: 'incomplete', temporaryResourcesRemoved: false },
+      { status: 'released', projection: 'complete' }
+    ])
+    expect(finished).toHaveBeenCalledOnce()
+    expect(finished).toHaveBeenCalledWith(result)
   })
 })

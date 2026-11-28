@@ -1086,6 +1086,8 @@ process.exitCode = 0
       const childCleanup: EnvironmentChildCleanup = {
         identity: child,
         startedAt: Date.now(),
+        hasLiveChild: () =>
+          child.pid !== undefined && child.exitCode === null && child.signalCode === null,
         release: () => terminateTree(child)
       }
       if (child.pid !== undefined) {

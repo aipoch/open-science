@@ -39,12 +39,25 @@ describe('Compute process monitoring', () => {
   let container: HTMLDivElement
   const read = vi.fn()
   const terminate = vi.fn()
+  const readResources = vi.fn()
+  const releaseResources = vi.fn()
+  const openSession = vi.fn()
   beforeEach(() => {
     vi.useFakeTimers()
     read.mockReset().mockResolvedValue(snapshot())
     terminate.mockReset().mockResolvedValue(undefined)
+    readResources.mockReset().mockResolvedValue({ groups: [], pendingDecisions: [], releases: [] })
+    releaseResources.mockReset()
+    openSession.mockReset()
     Object.assign(window, {
-      api: { notebook: { getProcessMonitor: read, terminateMonitoredProcess: terminate } }
+      api: {
+        notebook: {
+          getProcessMonitor: read,
+          terminateMonitoredProcess: terminate,
+          getProjectResources: readResources,
+          releaseSessionResources: releaseResources
+        }
+      }
     })
     container = document.createElement('div')
     document.body.append(container)
@@ -62,7 +75,7 @@ describe('Compute process monitoring', () => {
           isActive={isActive}
           projectId="p1"
           sessionTitles={new Map([['same-session', 'Analysis']])}
-          openSession={() => {}}
+          openSession={openSession}
         />
       )
     )
@@ -84,23 +97,29 @@ describe('Compute process monitoring', () => {
     container.querySelector('[data-testid="kernel-summary"]')!.textContent!
 
   it('starts with collapsed sessions and reveals every interpreter across projects on demand', async () => {
+    const sample = snapshot()
+    sample.instances[0].environment = 'research'
+    read.mockResolvedValue(sample)
     await mount()
     expect(container.textContent).toContain('test-host')
     expect(container.textContent).toContain('25.0%')
-    expect(totals()).toContain('3 kernels')
+    expect(totals()).toContain('3 processes')
     expect(
       container.querySelectorAll('details[data-kernel-details], pre, table, svg[role="img"]')
     ).toHaveLength(0)
     await toggleSession()
+    const resourceRow = container.querySelector('details[data-kernel-details] summary')!
+    expect(resourceRow.textContent).toContain('Python · research')
+    expect(resourceRow.textContent).toContain('Idle')
     expect(container.querySelector('[role="img"][aria-label="Python"]')).not.toBeNull()
     expect(container.querySelector('[role="img"][aria-label="JavaScript REPL"]')).not.toBeNull()
     await toggleSession(1)
     expect(container.querySelector('[role="img"][aria-label="Shell"]')).not.toBeNull()
     await click('Current project')
-    expect(totals()).toContain('2 kernels')
+    expect(totals()).toContain('2 processes')
     expect(container.querySelector('[role="img"][aria-label="Shell"]')).toBeNull()
-    await click('All kernels')
-    expect(totals()).toContain('3 kernels')
+    await click('All projects')
+    expect(totals()).toContain('3 processes')
     expect(container.querySelector('[role="img"][aria-label="Shell"]')).not.toBeNull()
   })
 
@@ -108,6 +127,48 @@ describe('Compute process monitoring', () => {
     await mount()
     expect(container.textContent).toContain('Committed / limit')
     expect(container.textContent).toContain('8.0 GB / 16.0 GB')
+  })
+
+  it('refreshes project resources manually and clears their errors on successful reads', async () => {
+    const failure = 'Could not refresh Notebook resources'
+    readResources.mockRejectedValueOnce(new Error('Resources unavailable'))
+    await mount()
+    expect(container.textContent).toContain(failure)
+
+    await click('Refresh')
+    expect(readResources).toHaveBeenLastCalledWith({ projectId: 'p1' })
+    expect(container.textContent).not.toContain(failure)
+
+    readResources.mockRejectedValueOnce(new Error('Resources unavailable'))
+    await act(async () => vi.advanceTimersByTimeAsync(3000))
+    expect(container.textContent).toContain(failure)
+    await act(async () => vi.advanceTimersByTimeAsync(3000))
+    expect(container.textContent).not.toContain(failure)
+
+    const header = container.querySelector('button[aria-controls]')!.closest('header')!
+    await click('Stop all', header)
+    const stopError = 'Notebook resources changed. Refresh and review the current resources.'
+    expect(container.textContent).toContain(stopError)
+    await click('Refresh')
+    expect(container.textContent).toContain(stopError)
+  })
+
+  it('keeps the Stop all read failure behind localized diagnostics', async () => {
+    await mount()
+    const rawError = 'Error invoking remote method notebook:project-resources: backend offline'
+    readResources.mockRejectedValueOnce(new Error(rawError))
+    const header = container.querySelector('button[aria-controls]')!.closest('header')!
+    await click('Stop all', header)
+
+    const summary = container.querySelector('[role="alert"]')!
+    expect(summary.textContent).toContain('Could not refresh Notebook resources')
+    expect(summary.textContent).not.toContain(rawError)
+    const details = summary.closest('section')!.querySelector('details')!
+    expect(details.querySelector('summary')?.textContent).toContain('Details')
+    expect(details.querySelector('pre')?.textContent).toBe(rawError)
+    expect(details.open).toBe(false)
+    expect(document.querySelector('[role="alertdialog"]')).toBeNull()
+    expect(releaseResources).not.toHaveBeenCalled()
   })
 
   it('sums current kernel uptimes per session, including idle time, without a duration column', async () => {
@@ -160,17 +221,17 @@ describe('Compute process monitoring', () => {
     expect(totals()).not.toContain('≥ <')
   })
 
-  it('offers all kernels when the selected project is empty', async () => {
+  it('can return to all projects when the selected project is empty', async () => {
     const sample = snapshot()
     sample.instances = sample.instances.filter((item) => item.projectId !== 'p1')
     read.mockResolvedValue(sample)
     await mount()
     await click('Current project')
-    expect(totals()).toContain('0 kernels')
-    expect(container.textContent).toContain('No kernels in this project')
-    await click('View all kernels (1)')
-    expect(totals()).toContain('1 kernel')
-    expect(container.textContent).not.toContain('No kernels in this project')
+    expect(totals()).toContain('0 processes')
+    expect(container.querySelector('button[aria-controls]')).toBeNull()
+    await click('All projects')
+    expect(totals()).toContain('1 process')
+    expect(container.querySelector('button[aria-controls]')).not.toBeNull()
   })
 
   it('preserves expanded sessions through polling and starts new sessions collapsed', async () => {
@@ -187,14 +248,14 @@ describe('Compute process monitoring', () => {
       ]
     })
     await act(async () => vi.advanceTimersByTimeAsync(3000))
-    const toggles = container.querySelectorAll('button[aria-controls]')
-    expect([...toggles].map((button) => button.getAttribute('aria-expanded'))).toEqual([
-      'true',
-      'false',
-      'false'
-    ])
+    expect(container.querySelectorAll('button[aria-controls][aria-expanded="false"]')).toHaveLength(
+      2
+    )
+    const expandedSession = container.querySelector<HTMLButtonElement>(
+      'button[aria-controls][aria-expanded="true"]'
+    )!
     expect(container.querySelectorAll('details[data-kernel-details]')).toHaveLength(2)
-    await toggleSession()
+    await act(async () => expandedSession.click())
     expect(
       container.querySelectorAll('details[data-kernel-details], pre, table, svg[role="img"]')
     ).toHaveLength(0)
@@ -217,13 +278,13 @@ describe('Compute process monitoring', () => {
   it('opens an inline form and sends only the exact instance identity for termination', async () => {
     await mount()
     await toggleSession()
-    await click('Terminate')
+    await click('Stop', container.querySelector('[data-kernel-details]')!)
     expect(terminate).not.toHaveBeenCalled()
     expect(document.querySelector('[role="alertdialog"]')).toBeNull()
     expect(container.querySelector('textarea')).toBe(document.activeElement)
     await click('Cancel', container.querySelector('form')!)
     expect(terminate).not.toHaveBeenCalled()
-    await click('Terminate')
+    await click('Stop', container.querySelector('[data-kernel-details]')!)
     await click('Terminate', container.querySelector('form')!)
     expect(terminate).toHaveBeenCalledExactlyOnceWith({
       id: 'instance-0',
@@ -233,15 +294,45 @@ describe('Compute process monitoring', () => {
     expect(read).toHaveBeenCalledTimes(2)
   })
 
-  it('groups by session and submits the selected kernels with the comment', async () => {
+  it('combines process rows and other resources and confirms the scoped session release', async () => {
+    const group = {
+      projectId: 'p1',
+      sessionId: 'same-session',
+      revision: 'compute-revision',
+      resources: [
+        { id: 'python', group: 'kernel', kind: 'python', phase: 'idle' },
+        { id: 'installer', group: 'installer', environment: 'research', phase: 'starting' },
+        { id: 'wait', group: 'operation', phase: 'starting' }
+      ].map((resource) => ({ ...resource, memory: { metric: 'rss', coverage: 'unknown' } }))
+    }
+    readResources.mockResolvedValue({ groups: [group], pendingDecisions: [], releases: [] })
+    releaseResources.mockResolvedValue({
+      ...group,
+      operationId: 'stop-all',
+      status: 'released',
+      resources: [],
+      startedAt: Date.now(),
+      continuations: []
+    })
     await mount()
-    expect(container.querySelectorAll('section section')).toHaveLength(2)
-    await act(async () =>
-      container.querySelector<HTMLButtonElement>('[aria-label="Session actions"]')!.click()
+    await toggleSession()
+    expect(container.querySelector('details[data-kernel-details] summary')?.textContent).toContain(
+      'Python'
     )
-    expect(document.querySelector('[data-action-id="open"]')?.textContent).toBe('Open session')
-    await act(async () => document.querySelector<HTMLElement>('[data-action-id="stop"]')!.click())
-    const dialog = container.querySelector('form')!
+    const other = [...container.querySelectorAll('summary')].find((row) =>
+      row.textContent?.includes('Other resources')
+    )!.parentElement!
+    expect(other.textContent).toContain('Other resources (1)')
+    expect(other.textContent).toContain('Environment installer · research')
+    expect(other.textContent).not.toContain('Pending operation')
+    const sessionHeader = container.querySelector('button[aria-controls]')!.closest('header')!
+    expect(sessionHeader.querySelectorAll('[aria-label="Open session"]')).toHaveLength(1)
+    await click('Open session', sessionHeader)
+    expect(openSession).toHaveBeenCalledExactlyOnceWith('p1', 'same-session')
+    expect(releaseResources).not.toHaveBeenCalled()
+    await click('Stop all', sessionHeader)
+    expect(releaseResources).not.toHaveBeenCalled()
+    const dialog = document.querySelector('[role="alertdialog"]')!
     const textarea = dialog.querySelector('textarea')!
     await act(async () => {
       Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(
@@ -250,13 +341,14 @@ describe('Compute process monitoring', () => {
       )
       textarea.dispatchEvent(new Event('input', { bubbles: true }))
     })
-    await click('Terminate', dialog)
-    expect(terminate).toHaveBeenCalledExactlyOnceWith({
-      ids: ['instance-0', 'instance-1'],
+    await click('Stop', dialog)
+    expect(releaseResources).toHaveBeenCalledExactlyOnceWith({
       projectId: 'p1',
       sessionId: 'same-session',
-      comment: 'Use smaller batches'
+      revision: 'compute-revision',
+      stopAll: { comment: 'Use smaller batches' }
     })
+    expect(terminate).not.toHaveBeenCalled()
   })
 
   it('pauses a mounted inactive preview and refreshes when it becomes active', async () => {
@@ -341,10 +433,10 @@ describe('Compute process monitoring', () => {
     terminate.mockRejectedValue(new Error('cleanup unverified'))
     await mount()
     await toggleSession()
-    await click('Terminate')
+    await click('Stop', container.querySelector('[data-kernel-details]')!)
     await click('Terminate', container.querySelector('form')!)
     expect(container.textContent).toContain('Process cleanup could not be confirmed')
-    expect(totals()).toContain('3 kernels')
+    expect(totals()).toContain('3 processes')
     await act(async () => vi.advanceTimersByTimeAsync(3000))
     expect(read).toHaveBeenCalledTimes(3)
     act(() => root.unmount())

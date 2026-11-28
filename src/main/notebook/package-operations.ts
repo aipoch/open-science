@@ -1,3 +1,4 @@
+import { isChildUnconfirmedError } from '@aipoch/environment'
 import type {
   EnvironmentCaptureTarget,
   EnvironmentStateTracker,
@@ -259,7 +260,11 @@ class NotebookPackageOperations {
     }
   }
 
-  async manage(request: InstallRequest, signal?: AbortSignal): Promise<InstallResult> {
+  async manage(
+    request: InstallRequest,
+    signal?: AbortSignal,
+    onUnconfirmedChild?: (error: unknown) => void
+  ): Promise<InstallResult> {
     signal?.throwIfAborted()
     const resolution = await this.admission.resolveTarget(request)
     try {
@@ -305,6 +310,7 @@ class NotebookPackageOperations {
           : admission.target.environmentName
       return { ...result, environmentName, target: admission.target.receipt }
     } catch (error) {
+      if (isChildUnconfirmedError(error)) onUnconfirmedChild?.(error)
       return packageOperationFailure(error, resolution.receipt)
     }
   }
