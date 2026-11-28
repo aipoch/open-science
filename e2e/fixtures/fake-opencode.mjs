@@ -1043,7 +1043,7 @@ const verifyWindowsReplLifecycle = async (sessionId) =>
       exited.status !== 'failed' ||
       kernel?.kind !== 'repl' ||
       kernel.exitCode !== 23 ||
-      kernel.cleanup !== 'verified'
+      exited.recovery?.retryAfter !== 'runtime-ready'
     )
       throw new Error(`Unexpected result for the deliberate REPL exit: ${JSON.stringify(exited)}`)
     const shell = await call('bash_execute', { command: "Write-Output 'REPL_CLEANUP_SHELL_OK'" })
